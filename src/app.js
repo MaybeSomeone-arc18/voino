@@ -5,6 +5,8 @@ import {speechSnapshot,stitchSpeech} from './speech.js';
 const $ = id => document.getElementById(id);
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 let recognition, recording = false, startedAt = 0, clock, beforeSession = '', listening = false;
+let retryTimer, networkRetries=0, networkRetryPending=false;
+const recognitionFailure=(reason,retries,active)=>active&&reason==='network'&&retries<2?{retry:true,delay:750*(retries+1)}:{retry:false,delay:0};
 const fields=['title','transcript','noteTitle','points','actions'];
 // Guest sessions are deliberately ephemeral. Never restore another visitor's words
 // from this browser, including drafts written by older versions of Voino.
@@ -32,19 +34,36 @@ $('downloadBoard').addEventListener('click',()=>{const blob=new Blob([JSON.strin
 
 const error=text=>{ $('error').textContent=text;$('error').hidden=!text };
 const formatTime=seconds=>`${String(Math.floor(seconds/60)).padStart(2,'0')}:${String(seconds%60).padStart(2,'0')}`;
-function finish(){recording=false;clearInterval(clock);$('record').textContent='Start speaking';$('record').classList.remove('active');$('recorder').classList.remove('listening');$('recordStatus').textContent='Paused. Your transcript is editable.';save()}
-function begin(resume=false){
+function finish(){recording=false;clearTimeout(retryTimer);networkRetryPending=false;clearInterval(clock);$('record').textContent='Start speaking';$('record').classList.remove('active');$('recorder').classList.remove('listening');$('recordStatus').textContent='Paused. Your transcript is editable.';save()}
+function begin(resume=false, automatic=false){
  if(!SpeechRecognition){error('This browser does not offer speech recognition. Use a supported Chrome browser, or paste a transcript to make notes.');return}
- if(!resume){const typedName=$('title').value;clearSession();$('title').value=typedName}
+ if(!resume){const typedName=$('title').value;clearSession();$('title').value=typedName;networkRetries=0}
+ if(!automatic)networkRetries=0;
+ clearTimeout(retryTimer);networkRetryPending=false;
  error('');const before=$('transcript').value.trim();beforeSession=resume&&before ? before+' ' : '';
  recognition=new SpeechRecognition();const current=recognition;recognition.lang=document.documentElement.lang||'en';recognition.continuous=true;recognition.interimResults=true;
- recognition.onresult=e=>{if(!recording||recognition!==current)return;const words=speechSnapshot(e.results);$('transcript').value=stitchSpeech(beforeSession,words);save()};
- recognition.onerror=e=>{if(!recording||recognition!==current)return;const denied=e.error==='not-allowed'||e.error==='service-not-allowed';error(denied?'Microphone access was denied. Allow it in your browser, or paste a transcript.':`Speech recognition stopped (${e.error}). Press Continue listening to resume this session.`);finish();if(!denied)$('record').textContent='Continue listening'};
- recognition.onend=()=>{if(recognition!==current)return;listening=false;if(recording){error('Speech recognition stopped. Press Continue listening to resume this session.');finish();$('record').textContent='Continue listening'}};
+ recognition.onresult=e=>{if(!recording||recognition!==current)return;networkRetries=0;const words=speechSnapshot(e.results);$('transcript').value=stitchSpeech(beforeSession,words);save()};
+ recognition.onerror=e=>{
+  if(!recording||recognition!==current)return;
+  const decision=recognitionFailure(e.error,networkRetries,recording);
+  if(decision.retry){
+    networkRetries++;networkRetryPending=true;listening=false;clearInterval(clock);
+    $('recordStatus').textContent=`Speech service disconnected. Retrying ${networkRetries}/2...`;
+    error('Browser speech service is unreachable right now. Retrying briefly; your words are kept.');
+    retryTimer=setTimeout(()=>{if(!recording||recognition!==current)return;beforeSession=$('transcript').value.trim();begin(true,true)},decision.delay);
+    return;
+  }
+  const denied=e.error==='not-allowed'||e.error==='service-not-allowed';
+  const network=e.error==='network';
+  error(denied?'Microphone access was denied. Allow it in your browser, or paste a transcript.':network?"The browser's online speech service could not connect after three attempts. Check your connection, Chrome microphone permission and VPN/firewall, or type/paste the transcript.":`Speech recognition stopped (${e.error}). Press Continue listening to resume this session.`);
+  finish();$('recordStatus').textContent=network?'Speech service unavailable. Your transcript is safe to edit.':'Speech paused. Your transcript is editable.';
+  if(!denied)$('record').textContent='Continue listening';
+ };
+ recognition.onend=()=>{if(recognition!==current)return;listening=false;if(recording&&!networkRetryPending){error('Speech recognition stopped. Press Continue listening to resume this session.');finish();$('record').textContent='Continue listening'}};
  try{recognition.start();listening=true;recording=true;startedAt=Date.now();$('record').textContent='Stop listening';$('record').classList.add('active');$('recorder').classList.add('listening');$('recordStatus').textContent='Listening for words...';clock=setInterval(()=>$('timer').textContent=formatTime(Math.floor((Date.now()-startedAt)/1000)),1000)}catch{error('Could not start the microphone. Try again or paste a transcript.');finish()}
 }
 $('support').textContent=SpeechRecognition?'Speech recognition available':'Manual transcript mode';
-$('record').addEventListener('click',()=>{if(recording){recording=false;if(listening)recognition.stop();finish()}else begin($('record').textContent==='Continue listening')});
+$('record').addEventListener('click',()=>{if(recording){recording=false;clearTimeout(retryTimer);if(listening)recognition.stop();finish()}else begin($('record').textContent==='Continue listening')});
 $('generate').addEventListener('click',()=>{error('');const source=$('transcript').value.trim();if(!source){error('Speak, paste or type some words first.');return}if((cards.length||shapes.length)&&!confirm('Replace your current board with new notes? Export it first if you want to keep it.'))return;const n=makeNotes(source,$('title').value);$('noteTitle').value=n.title;$('points').value=n.points.join('\n\n');$('actions').value=n.actions.join('\n\n');cards=toCards(n);connections=[];shapes=[];renderBoard();save();saveBoard();$('noteTitle').focus()});
 const currentNote=()=>({title:$('noteTitle').value.trim()||'New note',points:$('points').value.split(/\n\s*\n|\n/).map(x=>x.trim()).filter(Boolean),actions:$('actions').value.split(/\n\s*\n|\n/).map(x=>x.trim()).filter(Boolean),transcript:$('transcript').value.trim()});
 $('copy').addEventListener('click',async()=>{try{await navigator.clipboard.writeText(exportText(currentNote()));$('copy').textContent='Copied';setTimeout(()=>$('copy').textContent='Copy notes',1800)}catch{error('Clipboard unavailable. Download the note instead.')}});

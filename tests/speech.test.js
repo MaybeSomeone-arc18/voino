@@ -16,3 +16,9 @@ test('overlap and repeated result are idempotent',()=>{
  assert.equal(stitchSpeech('meeting is Wednesday','is Wednesday send notes'),'meeting is Wednesday send notes');
  assert.equal(stitchSpeech('meeting is Wednesday','meeting is Wednesday'),'meeting is Wednesday');
 });
+
+test('network-start retry remains bounded',()=>{
+ const retry=(reason,n,active)=>active&&reason==='network'&&n<2?750*(n+1):0;
+ assert.equal(retry('network',0,true),750);assert.equal(retry('network',1,true),1500);
+ assert.equal(retry('network',2,true),0);assert.equal(retry('not-allowed',0,true),0);assert.equal(retry('network',0,false),0);
+});

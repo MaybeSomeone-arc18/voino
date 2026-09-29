@@ -21,3 +21,5 @@
 .recorder.listening{border:1px solid #bc584b;background:#fff5ef}.recorder.listening .mic{color:#b94034;animation:voicePulse 1.35s ease-in-out infinite}.recorder.listening #timer{color:#ad3d32}.card{animation:cardArrive .32s cubic-bezier(.2,.8,.2,1) both}.card:nth-of-type(2){animation-delay:.05s}.card:nth-of-type(3){animation-delay:.1s}.card:nth-of-type(4){animation-delay:.15s}@keyframes voicePulse{50%{transform:scale(1.25);opacity:.5}}@keyframes cardArrive{from{opacity:0;translate:0 8px}to{opacity:1;translate:0 0}}@media(prefers-reduced-motion:reduce){.recorder.listening .mic,.card{animation:none!important}}
 
 #shapes{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}.board.drawing{touch-action:none;cursor:crosshair}.board.drawing .card{cursor:text}.drawTool.selected{background:#e3efe3;border-color:#286247}.recorder.listening .mic{box-shadow:0 0 0 7px #dd6b5b20;border-radius:50%}
+
+.guest-badge{display:inline-block;background:#e9f1e9;color:#28513f;border:1px solid #bad1c2;border-radius:100px;padding:8px 12px;font-size:11px;font-weight:700;letter-spacing:.08em;margin:0 0 22px}

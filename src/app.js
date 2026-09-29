@@ -1,6 +1,7 @@
 import {makeNotes,exportText} from './notes.js';
 import {toCards,safeCards,safeConnections} from './board.js';
 import {safeShapes,drawShapes} from './draw.js';
+import {speechSnapshot,stitchSpeech} from './speech.js';
 const $ = id => document.getElementById(id);
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 let recognition, recording = false, startedAt = 0, clock, beforeSession = '', listening = false;
@@ -29,7 +30,7 @@ function begin(){
  if(!SpeechRecognition){error('This browser does not offer speech recognition. Use a supported Chrome browser, or paste a transcript to make notes.');return}
  error('');const before=$('transcript').value.trim();beforeSession=before ? before+' ' : '';
  recognition=new SpeechRecognition();recognition.lang=document.documentElement.lang||'en';recognition.continuous=true;recognition.interimResults=true;
- recognition.onresult=e=>{let words='';for(let i=0;i<e.results.length;i++)words+=e.results[i][0].transcript.trim()+' ';$('transcript').value=(beforeSession+words).trim();save()};
+ recognition.onresult=e=>{const words=speechSnapshot(e.results);$('transcript').value=stitchSpeech(beforeSession,words);save()};
  recognition.onerror=e=>{error(e.error==='not-allowed'?'Microphone access was denied. Allow it in your browser, or paste a transcript.':`Speech recognition stopped (${e.error}). You can edit the transcript and try again.`);finish()};
  recognition.onend=()=>{listening=false;if(recording){error('Speech recognition stopped. Press Start speaking to continue; your words are still here.');finish()}};
  try{recognition.start();listening=true;recording=true;startedAt=Date.now();$('record').textContent='Stop listening';$('record').classList.add('active');$('recorder').classList.add('listening');$('recordStatus').textContent='Listening for words...';clock=setInterval(()=>$('timer').textContent=formatTime(Math.floor((Date.now()-startedAt)/1000)),1000)}catch{error('Could not start the microphone. Try again or paste a transcript.');finish()}

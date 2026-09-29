@@ -35,12 +35,12 @@ const formatTime=seconds=>`${String(Math.floor(seconds/60)).padStart(2,'0')}:${S
 function finish(){recording=false;clearInterval(clock);$('record').textContent='Start speaking';$('record').classList.remove('active');$('recorder').classList.remove('listening');$('recordStatus').textContent='Paused. Your transcript is editable.';save()}
 function begin(resume=false){
  if(!SpeechRecognition){error('This browser does not offer speech recognition. Use a supported Chrome browser, or paste a transcript to make notes.');return}
- if(!resume)clearSession();
+ if(!resume){const typedName=$('title').value;clearSession();$('title').value=typedName}
  error('');const before=$('transcript').value.trim();beforeSession=resume&&before ? before+' ' : '';
- recognition=new SpeechRecognition();recognition.lang=document.documentElement.lang||'en';recognition.continuous=true;recognition.interimResults=true;
- recognition.onresult=e=>{const words=speechSnapshot(e.results);$('transcript').value=stitchSpeech(beforeSession,words);save()};
- recognition.onerror=e=>{error(e.error==='not-allowed'?'Microphone access was denied. Allow it in your browser, or paste a transcript.':`Speech recognition stopped (${e.error}). You can edit the transcript and try again.`);finish()};
- recognition.onend=()=>{listening=false;if(recording){error('Speech recognition stopped. Press Continue listening to resume this session.');finish();$('record').textContent='Continue listening'}};
+ recognition=new SpeechRecognition();const current=recognition;recognition.lang=document.documentElement.lang||'en';recognition.continuous=true;recognition.interimResults=true;
+ recognition.onresult=e=>{if(!recording||recognition!==current)return;const words=speechSnapshot(e.results);$('transcript').value=stitchSpeech(beforeSession,words);save()};
+ recognition.onerror=e=>{if(!recording||recognition!==current)return;const denied=e.error==='not-allowed'||e.error==='service-not-allowed';error(denied?'Microphone access was denied. Allow it in your browser, or paste a transcript.':`Speech recognition stopped (${e.error}). Press Continue listening to resume this session.`);finish();if(!denied)$('record').textContent='Continue listening'};
+ recognition.onend=()=>{if(recognition!==current)return;listening=false;if(recording){error('Speech recognition stopped. Press Continue listening to resume this session.');finish();$('record').textContent='Continue listening'}};
  try{recognition.start();listening=true;recording=true;startedAt=Date.now();$('record').textContent='Stop listening';$('record').classList.add('active');$('recorder').classList.add('listening');$('recordStatus').textContent='Listening for words...';clock=setInterval(()=>$('timer').textContent=formatTime(Math.floor((Date.now()-startedAt)/1000)),1000)}catch{error('Could not start the microphone. Try again or paste a transcript.');finish()}
 }
 $('support').textContent=SpeechRecognition?'Speech recognition available':'Manual transcript mode';

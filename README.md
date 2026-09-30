@@ -132,3 +132,34 @@ More detail: [ARCHITECTURE.md](ARCHITECTURE.md).
 ## License
 
 MIT. See [LICENSE](LICENSE). The Caveat font is licensed under the SIL Open Font License.
+
+## Android RevenueCat Test Store demo
+
+This debug Android build uses `purchases_flutter` and the `voino_pro` entitlement.
+Listening, typing, notes, board editing and text export stay free. Android board
+JSON save, copy, open and pasted import require an active entitlement returned by
+RevenueCat. Web remains free and does not configure native purchases. No history
+or cloud sync is implemented.
+
+Build a debug APK with your project's public Test Store SDK key (not a secret API key):
+
+```sh
+flutter pub get
+flutter test
+flutter build apk --debug --dart-define=REVENUECAT_TEST_STORE_KEY=YOUR_PUBLIC_TEST_STORE_SDK_KEY
+```
+
+Configure the Test Store's current offering/package to grant `voino_pro`. Tap
+**Test Pro**, review the actual package metadata, then use the sandbox modal to
+simulate cancel/failure first and success last. Cancel/failure must leave board
+files locked. Success must return active `voino_pro`, enable save/open, and survive
+CustomerInfo refresh. Test **Restore test purchases**, then expiry/revocation.
+Test subscriptions expire quickly; the entitlement is checked again before file
+operations and on app resume. Connection failure locks only board files.
+
+This is sandbox billing with no real charge or finalized production pricing.
+It is not a Google Play release: release builds deliberately refuse this Test
+Store setup. A production billing configuration and release/signing review are
+separate work. Test Store acceptance for Shipaton has not been confirmed by the
+organizer. Real-device purchase and save/open acceptance must be recorded before
+claiming those paths work.

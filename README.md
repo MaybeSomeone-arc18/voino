@@ -1,38 +1,69 @@
 # Voino
 
-Listen during a meeting, lecture or discussion, then turn the transcript into editable notes and a visual board. This is a small, browser-first hackathon prototype: live speech recognition where supported, manual transcript input, deterministic extraction of key points and explicit to-dos, and ephemeral guest sessions. It does **not** record an audio file or transcribe uploaded files. It does **not** run offline, promise complete transcripts, generate AI summaries, or have a RevenueCat paywall.
+Turn words from meetings, lectures and discussions into editable notes and a visual board. Voino includes a browser prototype and a Capacitor Android app (`com.maybesomeone.voino`). The Android app uses native speech recognition and RevenueCat's Test Store. This is an unreleased Next Gen student prototype, not a production subscription service.
 
-## Run
+## What works and what does not
+
+- Capture speech where the browser/device supports it. Type/paste remains available; on phones, keyboard dictation is an optional fallback if the keyboard provides it.
+- Stop listening to create board cards automatically, or tap **Make editable board**. Correct the transcript first when needed. User-edited boards are not automatically replaced.
+- Edit cards, change colors, add cards, connect cards, draw circles/boxes, export notes as text and the board as JSON. Phone cards stack for readability; desktop cards can be dragged.
+- Notes are verbatim, rule-based extracts, not an AI summary. Shapes/connectors are manual, not inferred diagrams.
+- Android offers a RevenueCat sandbox purchase demonstration with `voino_pro` entitlement. No real charge or actual subscription price is represented by this flow. Pro history/cloud sync is **not implemented**; purchasing does not save notes.
+- Guest work is only in the current tab/app session. Export before reload/closing/reset. There is no cloud account, guaranteed offline launch, audio-file recorder, uploaded-audio transcription, or universal speech support.
+
+## Browser setup
+
+Use Node 22 or later and npm:
 
 ```bash
+npm ci
 npm test
 npm run serve
 ```
 
-Open http://localhost:8080 in desktop Chrome. Allow the microphone. Speak for a few seconds, press Stop, correct the transcript if needed, then press Turn into notes. Speech recognition is a browser feature whose availability and remote processing vary; paste/type a transcript if it is unavailable. No transcript is sent to Voino's own server. Browser speech recognition may send audio to the browser vendor. Guest drafts are not stored by Voino and vanish on reload or a fresh recording. Download to keep them. Get consent before recording anyone else's voice.
+Open `http://localhost:8080`. Browser source works without bundling; native SDK imports run only inside Capacitor. Browser speech support, permissions and online service availability vary. If the mic is unavailable, use the labeled manual path. Do not present typed input as speech recognition.
 
-## Demo script
+## Android debug setup
 
-1. Name a note "Study group". Say: "Photosynthesis means plants use sunlight to make energy. Remember to submit the biology worksheet Friday." Stop.
-2. Correct any transcription error. Generate notes, inspect that the first sentence is a key point and the second is a to-do.
-3. Edit a line; download the text and board before leaving. Refresh to show the guest session is empty.
+Install JDK 21, Android SDK platform 36 and compatible build tools. Set `JAVA_HOME` and `ANDROID_HOME` for your installation; accept Android SDK licenses. Android minimum SDK is defined in `android/variables.gradle`.
 
-Never use a typed transcript as if it was speech recognition during a demo. The live mic and typed-input routes must be identified honestly. This is not a native mobile app or an eligible global Shipaton entry yet.
+```bash
+npm ci
+npm test
+node build.cjs
+npx cap sync android
+cd android
+./gradlew assembleDebug
+```
 
-## Visual board
+APK output: `android/app/build/outputs/apk/debug/app-debug.apk`. On Windows use `gradlew.bat`. Install only as a debug prototype; allow microphone permission and ensure an Android speech service is installed/enabled. Speech may require internet. Do not submit this debug/Test Store build to Google Play.
 
-Generated key points and explicit next steps appear as cards on a dot-grid canvas. Each card is editable; its handle supports pointer drag and arrow-key movement. Add an idea card manually, or save the board as a JSON file. Card positions and content persist only while this tab stays open in guest mode. Voino does not claim to understand the full discussion, summarize it with AI, or produce Excalidraw diagrams, mind maps, or automatic graphics. The board is a simple editable visual workspace.
+### RevenueCat public SDK key
 
-## Personalization and offline boundary
+`build.cjs` contains the public Test Store SDK identifier configured for this prototype, so the debug build has no placeholder key. It is a public client identifier, **not a secret RevenueCat API key**. You can override it for your own project:
 
-On desktop, change a card's color using ◐, connect two cards by clicking Connect two cards then each card, and arrange cards via handle drag or arrow keys. Cards, colors and connectors stay in the current guest tab and are included in the JSON export. The note editor and visual board need no network after the page loads. Speech recognition needs the browser's supported service and may need internet. This version has no service worker, so it is not guaranteed to reopen offline; keep the loaded tab open when demonstrating without Wi-Fi. On narrow phones, cards stack for readability and connector arrows remain visible between them.
+```bash
+REVENUECAT_KEY='your_public_test_store_sdk_key' node build.cjs
+npx cap sync android
+```
 
-## Sketchboard look
+Your Test Store must have a current offering/package linked to the `voino_pro` entitlement. Sandbox entitlement access must include the test user. The configured project is a development service, whose availability is not guaranteed. Production builds require an explicit platform public SDK key and reject the default/Test Store key. A production key alone does not implement production billing or sync.
 
-The board has a hand-drawn-inspired CSS style, sketchy arrows and handwriting-style lettering. It is not Excalidraw or an Excalidraw file format. Cards, colors, arrows and edits are Voino features under that skin; guest work is not saved. If the remote display font does not load offline, the browser uses a local cursive fallback; the board remains functional.
+### Acceptance tests on the actual device
 
-## Phone-first prototype and device needs
+1. Speak: "Photosynthesis means plants use sunlight to make energy. Remember to submit the biology worksheet Friday." Stop. Check transcript, point and action cards, then edit a card.
+2. Resume speech: old words remain. After editing a card, another stop must not replace it automatically. Explicit regeneration asks before replacing edited content.
+3. Start speech and reset. No crash or stale words should return.
+4. Tap **Test Pro (history unavailable)**. Check the Test Store offering modal, then test failure and cancel first: neither should activate `voino_pro`. Finally simulate success: verify sandbox entitlement/purchase status. All of these are test transactions, not real revenue.
+5. Reopen promptly to test CustomerInfo entitlement readback. Test Store subscriptions expire rapidly (a monthly test subscription lasts about 25 minutes through renewals), so a later inactive result may be expected.
+6. Confirm corresponding sandbox transaction in RevenueCat. Local tests use synthetic speech/SDK responses and do not replace these live acceptance tests.
 
-Open this web app in a recent Chrome browser on a phone or desktop. The board, notes, colors, arrows, circles and boxes are browser UI and have no downloaded model or paid API. Browser microphone speech recognition support and service availability vary by device, browser, permissions and connection; manual transcript entry is always available. For the live demo, test Chrome speech recognition on the actual phone first. A typed/pasted transcript is the honest fallback if it fails. There is no guarantee of a particular minimum phone RAM, storage quota or operating system version until real-device tests. The source web assets are small (roughly 40 KB of HTML/CSS/JavaScript before transfer compression and excluding optional web fonts), but the browser's speech service may use network data. Guest notes vanish on reload or a fresh Start; export important notes to a file.
+## Privacy and licenses
 
-Circles and boxes are manual drawing tools on the board, not graphs inferred from speech. Choose a tool and drag on blank canvas. Undo removes the last drawn shape. On phones, cards stack and their existing arrow connectors remain visible. This is a browser prototype, not a native mobile app; no AI model is downloaded. Chrome's desktop built-in Summarizer API is not available on Android Chrome today, so no no-cost on-phone AI summary is promised. Source: https://developer.chrome.com/docs/ai/summarizer-api .
+Ask permission before capturing other people's speech. Browser/device recognition can send audio to its service provider; Voino has no own transcription backend. RevenueCat handles sandbox purchase/customer data. Never record private conversations or identifying information in a public submission video.
+
+Project code is MIT licensed; see [LICENSE](LICENSE). Third-party dependencies and fonts retain their own licenses; preserve applicable notices. Optional Google Fonts may be fetched online, with local fallbacks if unavailable.
+
+## Shipaton Next Gen
+
+Intended entry: Next Gen only, using a public licensed repository plus device demo instead of a store release. This does not claim organizer approval or a completed Devpost submission. The owner must finish the qualifying academic-email/category fields, supply honest device footage and required images, review materials and submit before the official deadline.

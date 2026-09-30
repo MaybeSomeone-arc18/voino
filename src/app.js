@@ -175,16 +175,18 @@ function activatePro() {
 
 if (isNative) {
  nativeReady.then(async()=>{
-  $('buyPro').style.display = 'inline-block';
+  $('purchaseStatus').hidden=false;
+  $('buyPro').style.display = 'inline-block';$('buyPro').disabled=true;
   Purchases.setLogLevel({ level: LOG_LEVEL.DEBUG });
   
   console.log('RevenueCat: Configuring SDK with API key ending in', String(process.env.REVENUECAT_KEY).slice(-4));
   await Purchases.configure({ apiKey: process.env.REVENUECAT_KEY });
   
+  $('buyPro').disabled=false;$('purchaseStatus').textContent='Sandbox test only. No charge; history sync is not available.';
   console.log('RevenueCat: Fetching initial CustomerInfo...');
-  Purchases.getCustomerInfo().then(info => {
+  Purchases.getCustomerInfo().then(({customerInfo: info}) => {
     console.log('RevenueCat: CustomerInfo retrieved', info);
-    if (info.entitlements.active['voino_pro']) {
+    if (info?.entitlements?.active?.['voino_pro']) {
       console.log('RevenueCat: voino_pro entitlement is ACTIVE at startup');
       activatePro();
     } else {
@@ -193,7 +195,9 @@ if (isNative) {
   }).catch(e => console.error('RevenueCat Error getting customer info:', e));
 
   $('buyPro').addEventListener('click', async () => {
+    $('buyPro').disabled=true;
     try {
+      $('purchaseStatus').textContent='Loading sandbox offering...';
       console.log('RevenueCat: Fetching offerings...');
       const offerings = await Purchases.getOfferings();
       console.log('RevenueCat: Offerings received', offerings);
@@ -203,24 +207,24 @@ if (isNative) {
         const { customerInfo } = await Purchases.purchasePackage({ aPackage: offerings.current.availablePackages[0] });
         
         console.log('RevenueCat: Purchase successful, checking updated CustomerInfo:', customerInfo);
-        if (customerInfo.entitlements.active['voino_pro']) {
+        if (customerInfo?.entitlements?.active?.['voino_pro']) {
           console.log('RevenueCat: voino_pro entitlement UNLOCKED via purchase!');
-          activatePro();
+          activatePro();$('purchaseStatus').textContent='Sandbox purchase successful: voino_pro is active. History sync is not available.';
         } else {
-          console.log('RevenueCat: Purchase succeeded but voino_pro entitlement missing in result');
+          $('purchaseStatus').textContent='Sandbox purchase returned without voino_pro. Not unlocked.';
         }
       } else {
         console.warn('RevenueCat: No current offerings or packages available in Test Store');
-        alert("No offerings available from Test Store.");
+        $('purchaseStatus').textContent='No sandbox offering available. No purchase made.';
       }
     } catch (e) {
       if (e.userCancelled) {
-         console.log('RevenueCat: Purchase cancelled by user, Pro not unlocked.');
+         $('purchaseStatus').textContent='Sandbox purchase cancelled. Not unlocked.';
       } else {
          console.error('RevenueCat: Purchase failed', e);
-         alert("Purchase error: " + e.message);
+         $('purchaseStatus').textContent='Sandbox purchase failed. Not unlocked. '+(e.message||'Try again later.');
       }
-    }
+    }finally{$('buyPro').disabled=false}
   });
- }).catch(()=>{error('Native purchases unavailable. Notes still work.');});
+ }).catch(()=>{$('buyPro').disabled=true;$('purchaseStatus').hidden=false;$('purchaseStatus').textContent='Sandbox setup unavailable. Notes still work.';error('Native purchases unavailable. Notes still work.');});
 }

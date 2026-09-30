@@ -22,3 +22,9 @@ test('network-start retry remains bounded',()=>{
  assert.equal(retry('network',0,true),750);assert.equal(retry('network',1,true),1500);
  assert.equal(retry('network',2,true),0);assert.equal(retry('not-allowed',0,true),0);assert.equal(retry('network',0,false),0);
 });
+test('raw Pages entry does not require static npm imports',async()=>{
+ const {readFile}=await import('node:fs/promises');const source=await readFile(new URL('../src/app.js',import.meta.url),'utf8');
+ assert.equal(/^import .*from ['"]@/m.test(source),false);
+ assert.match(source,/if\(!isNative&&!WebSpeechRecognition\)showManualMode\(\)/);
+ assert.equal(source.includes('recognition.stop()'),false);
+});

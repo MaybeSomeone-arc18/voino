@@ -13,6 +13,7 @@ import 'gemini.dart';
 import 'settings.dart';
 import 'whisper_stub.dart' if (dart.library.js_interop) 'whisper_web.dart';
 import 'logic.dart';
+import 'live_transcript.dart';
 
 void main() => runApp(const VoinoApp());
 
@@ -377,8 +378,6 @@ class _HomeState extends State<Home> {
 
   Widget _listenView() {
     final canListen = engine == 'whisper' ? WhisperEngine.supported : speechReady;
-    final live = transcript.text.trim();
-    final words = live.isEmpty ? '' : live.split(RegExp(r'\s+')).reversed.take(14).toList().reversed.join(' ');
     return Column(children: [
       Expanded(
         child: Stack(alignment: Alignment.center, children: [
@@ -387,10 +386,10 @@ class _HomeState extends State<Home> {
             left: 32,
             right: 32,
             child: Text(
-                words.isNotEmpty && listening ? '“$words”' : 'Turn conversations\ninto clarity.',
+                'Turn conversations\ninto clarity.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                    fontSize: words.isNotEmpty && listening ? 18 : 30,
+                    fontSize: 30,
                     height: 1.25,
                     fontWeight: FontWeight.w300,
                     color: ink,
@@ -403,6 +402,10 @@ class _HomeState extends State<Home> {
             gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [paper.withValues(alpha: 0), paper.withValues(alpha: 0.92)], stops: const [0, 0.35])),
         padding: const EdgeInsets.fromLTRB(24, 40, 24, 20),
         child: Column(mainAxisSize: MainAxisSize.min, children: [
+          if (listening) ...[
+            LiveTranscript(text: transcript.text),
+            const SizedBox(height: 18),
+          ],
           GestureDetector(
             onTap: canListen ? toggleListen : null,
             child: AnimatedContainer(

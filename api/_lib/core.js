@@ -213,7 +213,7 @@ function makeHandler({ env = process.env, fetchImpl = fetch, limiter = createRat
     if (req.method === 'OPTIONS') return res.status(204).end();
     if (req.method !== 'POST') return res.status(405).json({ error: 'method_not_allowed' });
 
-    const keys = parseKeys(env.GEMINI_KEYS);
+    const keys = parseKeys(env.GEMINI_KEYS || env.GEMINI_API_KEYS);
     if (!keys.length) return res.status(503).json({ error: 'not_configured' });
 
     const ip = String(req.headers?.['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown').split(',')[0].trim();

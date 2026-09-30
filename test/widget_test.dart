@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/painting.dart' show Rect;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -243,6 +244,184 @@ void main() {
       final client = MockClient((_) async => fail('no request expected'));
       final r = await summarizeWithFallback('Plants use sunlight to grow.', 'x', keys: ['k'], client: client);
       expect(r.how, 'Rule-based extract');
+    });
+  });
+
+  group('board layout', () {
+    test('no two cards overlap, even with many topics and actions', () {
+      final n = Note('T', List.generate(9, (i) => 'Point $i.'), ['Do A now.', 'Do B now.', 'Do C now.'], 't',
+          topics: [Topic('One', [0, 1, 2]), Topic('Two', [3, 4]), Topic('Three', [5, 6, 7]), Topic('Other', [8])]);
+      final b = buildBoard(n);
+      final rects = [for (final c in b.cards) Rect.fromLTWH(c.x, c.y, cardSize.width, cardSize.height)];
+      for (var i = 0; i < rects.length; i++) {
+        for (var j = i + 1; j < rects.length; j++) {
+          expect(rects[i].overlaps(rects[j]), isFalse, reason: '${b.cards[i].id} overlaps ${b.cards[j].id}');
+        }
+      }
+      expect(b.cards.where((c) => c.type == 'point').every((c) => c.color == 'mint'), isTrue);
+      expect(b.cards.where((c) => c.type == 'action').every((c) => c.color == 'rose'), isTrue);
+    });
+
+    test('decisions get circles in addition to the key point, capped at three', () {
+      final n = Note('T', ['We decided to ship Friday.', 'Sky is blue.', 'Everyone agreed to the budget.', 'The team chose Flutter.'], [], 't',
+          topics: [Topic('All', [0, 1, 2, 3])], keyPoint: 1);
+      final circles = buildBoard(n).shapes.where((s) => s.type == 'circle').toList();
+      expect(circles.length, 3);
+      expect(circles.map((c) => c.label), containsAll(['key', 'decision']));
+    });
+
+    test('every topic gets a labelled box and arrows are labelled', () {
+      final b = buildBoard(makeNotes(lecture, 'Bio'));
+      expect(b.shapes.where((s) => s.type == 'box').every((s) => s.label.isNotEmpty), isTrue);
+      final ai = noteFromGeminiJson({
+        'title': 'x', 'summary': '', 'points': ['A.', 'B.'], 'actions': [], 'topics': [{'name': 'T', 'points': [0, 1]}],
+        'links': [{'from': 0, 'to': 1, 'label': 'causes'}],
+      }, 't', 'New note');
+      expect(buildBoard(ai).links.any((l) => l.label == 'causes'), isTrue);
+    });
+  });
+
+  group('board layout (mind-map)', () {
+    Note big() => Note('Launch', List.generate(11, (i) => 'Point number $i here.'), ['Do A now.', 'Do B now.'], 't',
+        summary: 'A summary.',
+        topics: [Topic('One', [0, 1, 2, 3, 4, 5]), Topic('Two', [6, 7]), Topic('Three', [8, 9, 10])],
+        links: [NoteLink(0, 7, 'causes'), NoteLink(3, 9, 'leads to')],
+        keyPoint: 0);
+
+    test('title is central, groups sit on both sides, boxes contain their cards', () {
+      final b = buildBoard(big());
+      final title = b.cards.firstWhere((c) => c.type == 'title');
+      final xs = b.cards.where((c) => c.type != 'title').map((c) => c.x);
+      expect(xs.any((x) => x < title.x), isTrue);
+      expect(xs.any((x) => x > title.x), isTrue);
+      final boxes = b.shapes.where((s) => s.type == 'box').toList();
+      expect(boxes.length, 4); // 3 topics + To do
+      for (final c in b.cards.where((c) => c.type != 'title')) {
+        final r = Rect.fromLTWH(c.x, c.y, cardSize.width, cardSize.height);
+        expect(boxes.where((bx) => bx.rect.contains(r.topLeft) && bx.rect.contains(r.bottomRight)).length, 1, reason: c.id);
+      }
+    });
+
+    test('group boxes never overlap each other or the title, and stay on the canvas', () {
+      final b = buildBoard(big());
+      final boxes = b.shapes.where((s) => s.type == 'box').map((s) => s.rect).toList();
+      for (var i = 0; i < boxes.length; i++) {
+        for (var j = i + 1; j < boxes.length; j++) {
+          expect(boxes[i].overlaps(boxes[j]), isFalse);
+        }
+      }
+      final t = b.cards.first;
+      final tr = Rect.fromLTWH(t.x, t.y, cardSize.width, cardSize.height);
+      expect(boxes.any((r) => r.overlaps(tr)), isFalse);
+      expect(b.cards.every((c) => c.x >= 0 && c.y >= 0 && c.x <= 4000 && c.y <= 4000), isTrue);
+    });
+
+    test('point links keep their labels and every arrow ends on a real card', () {
+      final b = buildBoard(big());
+      final ids = b.cards.map((c) => c.id).toSet();
+      expect(b.links.every((l) => ids.contains(l.from) && ids.contains(l.to)), isTrue);
+      expect(b.links.where((l) => l.label == 'causes' && l.from == 'p0' && l.to == 'p7').length, 1);
+      expect(b.links.where((l) => l.from == 'title').length, 4);
+    });
+
+    test('empty and single-topic notes still lay out', () {
+      expect(buildBoard(Note('Only title', [], [], '')).cards.single.type, 'title');
+      final one = buildBoard(Note('T', ['A point here.'], [], 't', topics: [Topic('All', [0])]));
+      expect(one.cards.length, 2);
+    });
+
+    test('/api/summarize JSON becomes a board that survives a download and re-open', () {
+      final note = noteFromProxyJson({
+        'title': 'Sprint',
+        'summary': 'We planned.',
+        'points': ['We decided to ship Friday.', 'Testing is slow.', 'Docs are late.'],
+        'actions': [{'text': 'Fix tests', 'owner': 'Maya'}],
+        'topics': [{'name': 'Release', 'relatedPoints': [0, 1]}, {'name': 'Docs', 'relatedPoints': [2]}],
+        'links': [{'from': 1, 'to': 0, 'label': 'blocks'}],
+        'keyPoint': 0,
+      }, 't', 'New note');
+      final b = buildBoard(note);
+      expect(b.cards.where((c) => c.type == 'point').every((c) => c.color == 'mint'), isTrue);
+      expect(b.cards.singleWhere((c) => c.type == 'action').text, 'Fix tests (Maya)');
+      expect(b.shapes.where((s) => s.type == 'circle').map((s) => s.label), ['key']);
+      final json = jsonEncode({
+        'title': 'Sprint',
+        'transcript': 't',
+        'cards': b.cards.map((c) => c.toJson()).toList(),
+        'connections': b.links.map((l) => l.toJson()).toList(),
+        'shapes': b.shapes.map((s) => s.toJson()).toList(),
+      });
+      final r = parseBoardJson(json)!;
+      expect(r.board.cards.length, b.cards.length);
+      expect(r.board.links.length, b.links.length);
+      expect(r.board.shapes.length, b.shapes.length);
+      expect(r.board.links.any((l) => l.label == 'blocks'), isTrue);
+    });
+  });
+
+  group('board JSON validation (safeCards / safeConnections / safeShapes)', () {
+    test('safeCards drops bad types, non-text, duplicate ids and clamps coordinates and length', () {
+      final cards = safeCards([
+        {'id': 'a', 'type': 'point', 'text': 'ok', 'x': 99999, 'y': -5, 'color': 'nope'},
+        {'id': 'a', 'type': 'point', 'text': 'dup'},
+        {'id': 'b', 'type': 'script', 'text': 'bad type'},
+        {'id': 'c', 'type': 'idea', 'text': 42},
+        {'id': 'd', 'type': 'action', 'text': 'x' * 5000, 'x': double.nan, 'color': 'rose'},
+        'junk',
+        null,
+      ]);
+      expect(cards.map((c) => c.id), ['a', 'd']);
+      expect(cards[0].x, 4000);
+      expect(cards[0].y, 0);
+      expect(cards[0].color, 'mint');
+      expect(cards[1].text.length, 1400);
+      expect(cards[1].x, 24);
+      expect(cards[1].color, 'rose');
+    });
+
+    test('safeCards caps at 60 and tolerates non-lists', () {
+      expect(safeCards([for (var i = 0; i < 100; i++) {'id': '$i', 'type': 'idea', 'text': 't'}]).length, 60);
+      expect(safeCards('nope'), isEmpty);
+      expect(safeCards(null), isEmpty);
+    });
+
+    test('safeConnections keeps only arrows between known, different cards', () {
+      final links = safeConnections([
+        {'from': 'a', 'to': 'b', 'label': 'causes'},
+        {'from': 'a', 'to': 'ghost'},
+        {'from': 'a', 'to': 'a'},
+        {'from': 'b', 'to': 'a', 'label': 'y' * 200},
+        7,
+      ], {'a', 'b'});
+      expect(links.length, 2);
+      expect(links[0].label, 'causes');
+      expect(links[1].label.length, 60);
+      expect(safeConnections({'not': 'a list'}, {'a'}), isEmpty);
+    });
+
+    test('safeShapes keeps circles and boxes, clamps size and drops unknown shapes', () {
+      final shapes = safeShapes([
+        {'type': 'circle', 'x': 10, 'y': 20, 'w': 5, 'h': 99999, 'label': 'key'},
+        {'type': 'box', 'x': 0, 'y': 0},
+        {'type': 'star', 'x': 1, 'y': 1},
+        {'type': 'box', 'x': 'left', 'y': 1},
+        'junk',
+      ]);
+      expect(shapes.length, 2);
+      expect(shapes[0].rect.width, 8);
+      expect(shapes[0].rect.height, 800);
+      expect(shapes[1].rect.width, 80);
+    });
+
+    test('parseBoardJson rejects non-boards and accepts the legacy "links" key', () {
+      expect(parseBoardJson('[]'), isNull);
+      expect(parseBoardJson('{"cards": 3}'), isNull);
+      final r = parseBoardJson(jsonEncode({
+        'cards': [{'id': 'a', 'type': 'idea', 'text': 'A'}, {'id': 'b', 'type': 'idea', 'text': 'B'}],
+        'links': [{'from': 'a', 'to': 'b', 'label': 'x'}],
+      }))!;
+      expect(r.board.links.single.label, 'x');
+      expect(r.board.shapes, isEmpty);
     });
   });
 }

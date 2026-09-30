@@ -10,7 +10,8 @@ const cardColors = {
   'rose': Color(0xFFF6D9DA),
 };
 const cardSize = Size(260, 140);
-const _colW = 300.0, _rowH = 165.0, _top = 220.0, _maxCoord = 4000.0;
+const _colW = 290.0, _rowH = 170.0, _top = 40.0, _maxCoord = 4000.0;
+const _pad = 28.0, _labelH = 44.0, _groupGap = 70.0, _sideGap = 130.0, _margin = 24.0;
 
 class CardModel {
   CardModel(this.id, this.type, this.text, this.x, this.y, [this.color = 'mint']);
@@ -40,158 +41,157 @@ class BoardData {
   final List<ShapeModel> shapes;
 }
 
-/// Turns notes into a mind-map: title card on top, one boxed column per topic,
-/// a "To do" column, arrows for relationships and a circle on the key point.
+final _decision = RegExp(r'\b(?:decided|decision|agreed|we will|we.ll go with|chose|concluded|approved)\b', caseSensitive: false);
+
+/// Turns notes into a mind-map: the title card sits in the centre, topic groups (a box around
+/// their cards) fan out to its left and right, and "To do" cards are rose. Groups are stacked per
+/// side with fixed gaps, so cards never overlap. Arrows follow the links array; circles mark the
+/// key point and decisions.
 BoardData buildBoard(Note n) {
   final cards = <CardModel>[], links = <Link>[], shapes = <ShapeModel>[];
-  final columns = <(String, List<CardModel>)>[];
   final pointCard = <int, CardModel>{};
 
-  var col = 0;
+  // 1. Describe each group (name + cards); positions are computed below.
+  final groups = <_Group>[];
   for (final t in n.topics) {
-    final list = <CardModel>[];
-    for (var r = 0; r < t.points.length; r++) {
-      final i = t.points[r];
-      final c = CardModel('p$i', 'point', n.points[i], 24.0 + col * _colW, _top + r * _rowH);
-      pointCard[i] = c;
-      list.add(c);
-    }
-    columns.add((t.name, list));
-    col++;
+    if (t.points.isEmpty) continue;
+    groups.add(_Group(t.name, [for (final i in t.points) (id: 'p$i', type: 'point', text: n.points[i], color: 'mint', point: i)]));
   }
   if (n.actions.isNotEmpty) {
-    final list = [
-      for (var r = 0; r < n.actions.length; r++)
-        CardModel('a$r', 'action', n.actions[r], 24.0 + col * _colW, _top + r * _rowH, 'rose')
-    ];
-    columns.add(('To do', list));
-    col++;
+    groups.add(_Group('To do', [
+      for (var r = 0; r < n.actions.length; r++) (id: 'a$r', type: 'action', text: n.actions[r], color: 'rose', point: -1)
+    ]));
   }
-  final title = CardModel('title', 'title', n.summary.isNotEmpty ? '${n.title}\n\n${n.summary}' : n.title,
-      math.max(24.0, col * _colW / 2 - cardSize.width / 2 + 12), 24, 'sand');
-  cards.add(title);
 
-  for (final (name, list) in columns) {
-    cards.addAll(list);
-    final bottom = _top + (list.length - 1) * _rowH + cardSize.height;
-    shapes.add(ShapeModel('box', Rect.fromLTRB(list.first.x - 12, _top - 40, list.first.x + cardSize.width + 12, bottom + 16), name));
-    links.add(Link('title', list.first.id, name == 'To do' ? 'to do' : ''));
+  // 2. Alternate sides, always giving the next group to the shorter side.
+  final left = <_Group>[], right = <_Group>[];
+  var lh = 0.0, rh = 0.0;
+  for (final g in groups) {
+    if (rh <= lh) {
+      right.add(g);
+      rh += g.height + _groupGap;
+    } else {
+      left.add(g);
+      lh += g.height + _groupGap;
+    }
   }
+  final total = math.max(math.max(lh, rh) - _groupGap, cardSize.height);
+  final leftW = left.isEmpty ? 0.0 : left.map((g) => g.width).reduce(math.max);
+  final titleX = _margin + (left.isEmpty ? 0.0 : leftW + _sideGap);
+  final titleY = _top + (total - cardSize.height) / 2;
+  final rightX = titleX + cardSize.width + _sideGap;
+
+  cards.add(CardModel('title', 'title', n.summary.isNotEmpty ? '${n.title}\n\n${n.summary}' : n.title, titleX, titleY, 'sand'));
+
+  void place(List<_Group> side, double Function(_Group) xOf, double sideH) {
+    if (side.isEmpty) return;
+    var y = _top + (total - (sideH - _groupGap)) / 2;
+    for (final g in side) {
+      final x = xOf(g);
+      CardModel? first;
+      for (var k = 0; k < g.cards.length; k++) {
+        final d = g.cards[k];
+        final c = CardModel(d.id, d.type, d.text, x + _pad + (k % g.cols) * _colW, y + _labelH + (k ~/ g.cols) * _rowH, d.color);
+        first ??= c;
+        cards.add(c);
+        if (d.point >= 0) pointCard[d.point] = c;
+      }
+      shapes.add(ShapeModel('box', Rect.fromLTWH(x, y, g.width, g.height), g.name));
+      links.add(Link('title', first!.id, g.name == 'To do' ? 'to do' : ''));
+      y += g.height + _groupGap;
+    }
+  }
+
+  place(right, (_) => rightX, rh);
+  place(left, (g) => _margin + leftW - g.width, lh); // right-aligned so groups hug the title
+
   for (final l in n.links) {
     if (pointCard.containsKey(l.from) && pointCard.containsKey(l.to)) {
       links.add(Link('p${l.from}', 'p${l.to}', l.label));
     }
   }
+  // Circle the key point and up to two decisions ("we decided...", "agreed to...").
+  final circled = <int, String>{};
   final k = n.keyPoint;
-  if (k != null && pointCard.containsKey(k)) {
-    final c = pointCard[k]!;
-    shapes.add(ShapeModel('circle', Rect.fromLTWH(c.x, c.y, cardSize.width, cardSize.height).inflate(18), 'key'));
+  if (k != null) circled[k] = 'key';
+  for (var i = 0; i < n.points.length && circled.length < 3; i++) {
+    if (!circled.containsKey(i) && _decision.hasMatch(n.points[i])) circled[i] = 'decision';
+  }
+  for (final e in circled.entries) {
+    final c = pointCard[e.key];
+    if (c != null) shapes.add(ShapeModel('circle', Rect.fromLTWH(c.x, c.y, cardSize.width, cardSize.height).inflate(14), e.value));
   }
   return BoardData(cards, links, shapes);
 }
 
-/// Parses a shared board JSON, clamping everything the same way the app expects.
+typedef _Item = ({String id, String type, String text, String color, int point});
+
+class _Group {
+  _Group(this.name, this.cards);
+  final String name;
+  final List<_Item> cards;
+  int get cols => cards.length > 4 ? 2 : 1;
+  int get rows => (cards.length / cols).ceil();
+  double get width => _pad * 2 + cardSize.width + (cols - 1) * _colW;
+  double get height => _labelH + cardSize.height + (rows - 1) * _rowH + _pad;
+}
+
+double _num(dynamic v, double d, [double lo = 0, double hi = _maxCoord]) =>
+    v is num && v.isFinite ? v.toDouble().clamp(lo, hi) : d;
+
+String _cut(dynamic v, int max) {
+  final s = '${v ?? ''}';
+  return s.substring(0, math.min(max, s.length));
+}
+
+/// Validates the `cards` of a board file: known types only, text and coordinates clamped,
+/// duplicate ids dropped, at most 60 cards. Never throws.
+List<CardModel> safeCards(dynamic raw) {
+  final cards = <CardModel>[], seen = <String>{};
+  if (raw is! List) return cards;
+  for (final c in raw.take(60)) {
+    if (c is! Map || c['text'] is! String || !['title', 'point', 'action', 'idea'].contains(c['type'])) continue;
+    final id = '${c['id'] ?? 'card-${cards.length}'}';
+    if (!seen.add(id)) continue;
+    cards.add(CardModel(id, c['type'] as String, _cut(c['text'], 1400), _num(c['x'], 24), _num(c['y'], 24),
+        cardColors.containsKey(c['color']) ? c['color'] as String : 'mint'));
+  }
+  return cards;
+}
+
+/// Validates arrows: both ends must be [ids] of real cards, no self-loops, at most 60.
+List<Link> safeConnections(dynamic raw, Set<String> ids) {
+  final links = <Link>[];
+  if (raw is! List) return links;
+  for (final l in raw.take(60)) {
+    if (l is Map && ids.contains('${l['from']}') && ids.contains('${l['to']}') && '${l['from']}' != '${l['to']}') {
+      links.add(Link('${l['from']}', '${l['to']}', _cut(l['label'], 60)));
+    }
+  }
+  return links;
+}
+
+/// Validates circles and boxes: known types, numeric position, size clamped to 8..800, at most 40.
+List<ShapeModel> safeShapes(dynamic raw) {
+  final shapes = <ShapeModel>[];
+  if (raw is! List) return shapes;
+  for (final s in raw.take(40)) {
+    if (s is! Map || !['circle', 'box'].contains(s['type']) || s['x'] is! num || s['y'] is! num) continue;
+    shapes.add(ShapeModel(s['type'] as String,
+        Rect.fromLTWH(_num(s['x'], 0), _num(s['y'], 0), _num(s['w'], 80, 8, 800), _num(s['h'], 80, 8, 800)), _cut(s['label'], 80)));
+  }
+  return shapes;
+}
+
+/// Parses a shared board JSON (as written by "Download board JSON"). Null if it is not a board.
 ({String title, String transcript, BoardData board})? parseBoardJson(String raw) {
   try {
     final j = jsonDecode(raw);
     if (j is! Map || j['cards'] is! List) return null;
-    double num0(dynamic v, double d, [double lo = 0, double hi = _maxCoord]) =>
-        v is num && v.isFinite ? v.toDouble().clamp(lo, hi) : d;
-    final cards = <CardModel>[];
-    for (final c in (j['cards'] as List).take(60)) {
-      if (c is! Map || c['text'] is! String || !['title', 'point', 'action', 'idea'].contains(c['type'])) continue;
-      final color = cardColors.containsKey(c['color']) ? c['color'] as String : 'mint';
-      cards.add(CardModel('${c['id'] ?? 'card-${cards.length}'}', c['type'] as String,
-          (c['text'] as String).substring(0, math.min(1400, (c['text'] as String).length)),
-          num0(c['x'], 24), num0(c['y'], 24), color));
-    }
-    final ids = cards.map((c) => c.id).toSet();
-    final links = <Link>[];
-    for (final l in ((j['connections'] ?? j['links']) as List? ?? []).take(60)) {
-      if (l is Map && ids.contains('${l['from']}') && ids.contains('${l['to']}') && l['from'] != l['to']) {
-        links.add(Link('${l['from']}', '${l['to']}', '${l['label'] ?? ''}'));
-      }
-    }
-    final shapes = <ShapeModel>[];
-    for (final s in ((j['shapes'] as List?) ?? []).take(40)) {
-      if (s is! Map || !['circle', 'box'].contains(s['type']) || s['x'] is! num || s['y'] is! num) continue;
-      shapes.add(ShapeModel(s['type'] as String,
-          Rect.fromLTWH(num0(s['x'], 0), num0(s['y'], 0), num0(s['w'], 80, 8, 800), num0(s['h'], 80, 8, 800)),
-          '${s['label'] ?? ''}'));
-    }
-    return (title: '${j['title'] ?? ''}', transcript: '${j['transcript'] ?? ''}', board: BoardData(cards, links, shapes));
+    final cards = safeCards(j['cards']);
+    final links = safeConnections(j['connections'] ?? j['links'], cards.map((c) => c.id).toSet());
+    return (title: '${j['title'] ?? ''}', transcript: '${j['transcript'] ?? ''}', board: BoardData(cards, links, safeShapes(j['shapes'])));
   } catch (_) {
     return null;
   }
-}
-
-void _label(Canvas c, String text, Offset at, {double maxW = 240, Color color = const Color(0xFF6B4A38)}) {
-  if (text.isEmpty) return;
-  final tp = TextPainter(
-      text: TextSpan(text: text, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: color)),
-      textDirection: TextDirection.ltr,
-      maxLines: 1,
-      ellipsis: '…')
-    ..layout(maxWidth: maxW);
-  tp.paint(c, at);
-}
-
-class BoardPainter extends CustomPainter {
-  BoardPainter(this.cards, this.links, this.shapes);
-  final List<CardModel> cards;
-  final List<Link> links;
-  final List<ShapeModel> shapes;
-
-  @override
-  void paint(Canvas c, Size s) {
-    final sp = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 3
-      ..color = const Color(0xFFAE7353);
-    for (final sh in shapes) {
-      if (sh.type == 'circle') {
-        c.drawOval(sh.rect, sp);
-        _label(c, sh.label, sh.rect.topCenter + const Offset(-10, -18));
-      } else {
-        c.drawRRect(RRect.fromRectAndRadius(sh.rect, const Radius.circular(7)), sp);
-        _label(c, sh.label, sh.rect.topLeft + const Offset(10, 8));
-      }
-    }
-    final lp = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.5
-      ..color = const Color(0xFF3F4A5A);
-    final byId = {for (final x in cards) x.id: x};
-    Rect r(CardModel m) => Rect.fromLTWH(m.x, m.y, cardSize.width, cardSize.height);
-    // Point on the card edge in the direction of [to], so arrows stop at the card border.
-    Offset edge(Rect box, Offset to) {
-      final d = to - box.center;
-      if (d == Offset.zero) return box.center;
-      final t = math.min(d.dx == 0 ? double.infinity : (box.width / 2) / d.dx.abs(),
-          d.dy == 0 ? double.infinity : (box.height / 2) / d.dy.abs());
-      return box.center + d * t;
-    }
-
-    for (final l in links) {
-      final a = byId[l.from], b = byId[l.to];
-      if (a == null || b == null) continue;
-      final p = edge(r(a), r(b).center), q = edge(r(b), r(a).center);
-      c.drawLine(p, q, lp);
-      final d = q - p;
-      if (d.distance < 1) continue;
-      final u = d / d.distance, nrm = Offset(-u.dy, u.dx);
-      final base = q - u * 14;
-      c.drawPath(
-          Path()
-            ..moveTo(q.dx, q.dy)
-            ..lineTo((base + nrm * 7).dx, (base + nrm * 7).dy)
-            ..lineTo((base - nrm * 7).dx, (base - nrm * 7).dy)
-            ..close(),
-          Paint()..color = lp.color);
-      _label(c, l.label, Offset.lerp(p, q, 0.5)! + const Offset(6, -16), maxW: 140, color: const Color(0xFF3F4A5A));
-    }
-  }
-
-  @override
-  bool shouldRepaint(_) => true;
 }

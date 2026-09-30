@@ -13,7 +13,7 @@ const PROMPT =
   'Fix obvious speech-recognition slips only when the meaning is clear. ' +
   'Write a 2-4 sentence summary, concise key points (each a complete sentence), and action items only if someone actually said to do something. ' +
   'Group points into 1-4 topics using 0-based point indexes (relatedPoints). ' +
-  'Add links between related points with a short verb-phrase label ("causes", "leads to", "example of"), using point indexes.';
+  'Add links between related points with a short verb-phrase label ("causes", "leads to", "example of"), using point indexes. keyPoint is the index of the single most important point.';
 
 const SCHEMA = {
   type: 'OBJECT',
@@ -45,6 +45,7 @@ const SCHEMA = {
         required: ['from', 'to', 'label'],
       },
     },
+    keyPoint: { type: 'INTEGER' },
   },
   required: ['title', 'summary', 'points', 'actions', 'topics', 'links'],
 };
@@ -148,7 +149,9 @@ function validate(raw, transcript) {
     .filter((s) => s && !ungrounded(s, nums))
     .join(' ');
 
-  return { title: clean(r.title).slice(0, 100) || 'New note', summary, points, actions, topics, links };
+  const out = { title: clean(r.title).slice(0, 100) || 'New note', summary, points, actions, topics, links };
+  if (remap.has(r.keyPoint)) out.keyPoint = remap.get(r.keyPoint);
+  return out;
 }
 
 // ---- Gemini call --------------------------------------------------------

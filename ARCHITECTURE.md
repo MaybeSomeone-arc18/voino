@@ -5,7 +5,8 @@ Status: September 2026. Flutter app (Android + web on Vercel), local-first.
 ## Flow
 
 ```
-Mic -> speech_to_text (device/browser recognizer) -> editable transcript
+Mic -> speech_to_text (Android, or web Device speech)
+   or web/whisper.js (web, Whisper tiny.en via transformers.js, local) -> editable transcript
                                    |
                   +----------------+-----------------+
                   |                                  |
@@ -24,6 +25,7 @@ Mic -> speech_to_text (device/browser recognizer) -> editable transcript
 ## Modules
 - `lib/logic.dart`: speech stitching, `Note` model, local extractive notes (filler removal, keyword-weighted ranking, topic grouping, neighbour links). Keeps source wording; it selects sentences, it does not rewrite them.
 - `lib/gemini.dart`: direct call to Gemini `generateContent` with the user's keys. Key goes in the `x-goog-api-key` header, never the URL. Rotates to the next key on any failure, validates and clamps model output, and the app falls back to the local extractor on failure.
+- `web/whisper.js` + `lib/whisper_web.dart` (`whisper_stub.dart` elsewhere): web-only Whisper. Loads transformers.js 3.8.1 from jsDelivr and the model from Hugging Face on first use, records standalone 5-second MediaRecorder chunks, skips silent chunks, and Dart appends each chunk with `stitchSpeech` after `cleanWhisperText`. Needs internet for the first download only; the page itself is not yet installable/offline.
 - `lib/settings.dart`: keys, "use Gemini" switch and consent flag in `flutter_secure_storage`, on the device only.
 - `lib/board.dart`: card/link/shape models, `buildBoard` (notes to mind-map), `parseBoardJson` (sanitizing import), painter.
 - `lib/main.dart`: UI and state.
@@ -35,7 +37,7 @@ Mic -> speech_to_text (device/browser recognizer) -> editable transcript
 - Guest-only: nothing persists except settings. Export board JSON to keep work.
 
 ## Not built
-- Local/offline speech model (sherpa_onnx or Whisper) and an on-device LLM. Both were deliberately deferred.
+- Local speech on Android (deliberately skipped) and an on-device LLM.
 - Accounts, sync, payments (the old RevenueCat test purchase was not ported).
 - File download of exports (clipboard only), Excalidraw export.
 

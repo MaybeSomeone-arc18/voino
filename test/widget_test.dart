@@ -22,6 +22,23 @@ void main() {
     });
   });
 
+  group('whisper chunk merge', () {
+    test('cleanWhisperText strips non-speech tags', () {
+      expect(cleanWhisperText(' [BLANK_AUDIO] '), '');
+      expect(cleanWhisperText('Hello (music) there [ Silence ]'), 'Hello there');
+      expect(cleanWhisperText('♪ la la ♪'), 'la la');
+      expect(cleanWhisperText(null), '');
+    });
+    test('successive 5-second chunks append and dedupe overlap', () {
+      var t = '';
+      for (final chunk in ['Plants use sunlight', 'sunlight to make energy.', '[BLANK_AUDIO]', 'Chlorophyll absorbs light.']) {
+        final c = cleanWhisperText(chunk);
+        if (c.isNotEmpty) t = stitchSpeech(t, c);
+      }
+      expect(t, 'Plants use sunlight to make energy. Chlorophyll absorbs light.');
+    });
+  });
+
   group('local notes', () {
     test('separates actions, strips filler, keeps source wording', () {
       final n = makeNotes(lecture);

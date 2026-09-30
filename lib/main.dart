@@ -1,10 +1,12 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 import 'board.dart';
 import 'gemini.dart';
 import 'settings.dart';
+import 'whisper_stub.dart' if (dart.library.js_interop) 'whisper_web.dart';
 import 'logic.dart';
 
 void main() => runApp(const VoinoApp());
@@ -36,6 +38,8 @@ class _HomeState extends State<Home> {
   final speech = SpeechToText();
   bool speechReady = false, listening = false, boardEdited = false, connecting = false, busy = false;
   Settings settings = Settings();
+  String engine = 'device'; // device | whisper (web only)
+  String micNote = '';
   String summary = '', noteSource = '';
   String before = '', lastSource = '', status = idleStatus;
   String? drawMode, connectFrom;
@@ -56,12 +60,53 @@ class _HomeState extends State<Home> {
           },
           onError: (e) => _msg('Speech error: ${e.errorMsg}. You can type or paste instead.'),
         )
-        .then((ok) => setState(() => speechReady = ok));
+        .then((ok) => setState(() {
+              speechReady = ok;
+              if (!ok && WhisperEngine.supported) engine = 'whisper'; // no device recognizer: use Whisper
+            }));
   }
 
   void _msg(String m) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
 
+  Future<void> toggleWhisper() async {
+    if (listening) {
+      setState(() => micNote = 'Finishing transcription...');
+      await WhisperEngine.stop();
+      setState(() {
+        listening = false;
+        micNote = '';
+      });
+      generate(manual: false);
+      return;
+    }
+    setState(() {
+      listening = true;
+      micNote = 'Loading speech model...';
+    });
+    try {
+      await WhisperEngine.start(
+        onText: (t) {
+          final clean = cleanWhisperText(t);
+          if (clean.isNotEmpty && mounted) setState(() => transcript.text = stitchSpeech(transcript.text, clean));
+        },
+        onProgress: (p) {
+          if (mounted) setState(() => micNote = p >= 100 ? 'Listening (Whisper)...' : 'Downloading speech model $p% (first time only)');
+        },
+        onError: (m) => _msg(m),
+      );
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          listening = false;
+          micNote = '';
+        });
+        _msg('Whisper could not start: $e. Try Device speech or type instead.');
+      }
+    }
+  }
+
   Future<void> toggleListen() async {
+    if (engine == 'whisper') return toggleWhisper();
     if (listening) {
       await speech.stop();
       setState(() => listening = false);
@@ -144,7 +189,13 @@ class _HomeState extends State<Home> {
 
   Future<void> clearAll() async {
     if (!await confirm('Clear everything: transcript, notes, board and drawings? Download first if you want to keep them.')) return;
-    if (listening) await speech.cancel();
+    if (listening) {
+      if (engine == 'whisper') {
+        await WhisperEngine.stop();
+      } else {
+        await speech.cancel();
+      }
+    }
     setState(() {
       title.clear();
       transcript.clear();
@@ -158,6 +209,7 @@ class _HomeState extends State<Home> {
       lastSource = '';
       boardEdited = false;
       listening = false;
+      micNote = '';
       drawMode = null;
       connecting = false;
       connectFrom = null;
@@ -260,17 +312,32 @@ class _HomeState extends State<Home> {
       TextField(
           controller: title,
           decoration: const InputDecoration(labelText: 'Give it a name', border: OutlineInputBorder())),
+      if (kIsWeb && WhisperEngine.supported) ...[
+        const SizedBox(height: 12),
+        SegmentedButton<String>(
+          segments: [
+            const ButtonSegment(value: 'whisper', label: Text('Whisper (local)')),
+            ButtonSegment(value: 'device', label: const Text('Device speech'), enabled: speechReady),
+          ],
+          selected: {engine},
+          onSelectionChanged: listening ? null : (v) => setState(() => engine = v.first),
+        ),
+      ],
       const SizedBox(height: 12),
       Row(children: [
         FilledButton.icon(
-          onPressed: speechReady ? toggleListen : null,
+          onPressed: (engine == 'whisper' ? WhisperEngine.supported : speechReady) ? toggleListen : null,
           icon: Icon(listening ? Icons.stop : Icons.mic),
           label: Text(listening ? 'Stop listening' : (transcript.text.isEmpty ? 'Start speaking' : 'Continue listening')),
         ),
         const SizedBox(width: 12),
         Expanded(
             child: Text(
-                speechReady ? (listening ? 'Listening for words...' : 'Speech available') : 'Type / paste mode (speech unavailable)',
+                micNote.isNotEmpty
+                    ? micNote
+                    : (engine == 'whisper' || speechReady)
+                        ? (listening ? 'Listening for words...' : 'Speech available')
+                        : 'Type / paste mode (speech unavailable)',
                 style: const TextStyle(fontSize: 12))),
       ]),
       const SizedBox(height: 12),

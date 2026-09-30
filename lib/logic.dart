@@ -6,6 +6,10 @@ String cleanSpeech(String? v) => (v ?? '').replaceAll(RegExp(r'\s+'), ' ').trim(
 List<String> _tokens(String t) => cleanSpeech(t).split(' ').where((x) => x.isNotEmpty).toList();
 bool _eq(String a, String b) => a.toLowerCase() == b.toLowerCase();
 
+/// Removes Whisper's non-speech tags such as [BLANK_AUDIO], (music) and musical-note marks.
+String cleanWhisperText(String? raw) =>
+    cleanSpeech((raw ?? '').replaceAll(RegExp(r'\[[^\]]*\]|\([^)]*\)|[\u266A\u266B]+'), ' '));
+
 String stitchSpeech(String previous, String incoming) {
   final a = _tokens(previous), b = _tokens(incoming);
   if (a.isEmpty) return b.join(' ');

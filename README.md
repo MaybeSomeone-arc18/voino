@@ -3,7 +3,7 @@
 Turn words from meetings, lectures and discussions into editable notes and a visual board. Flutter app for Android and web (Vercel).
 
 ## What it does
-- Capture speech (device/browser recognizer via `speech_to_text`), or type/paste. Speech may use an online vendor service.
+- Capture speech, or type/paste. Android uses the device recognizer (`speech_to_text`). Web offers a toggle: **Whisper (local)** runs whisper-tiny.en in the browser (about 40 MB, downloaded on first use and cached, nothing sent to a server), or **Device speech**. Whisper is the default when the browser has no speech recognizer. Device/browser recognizers may use an online vendor service.
 - **Local notes by default:** filler removal, keyword-ranked points, topic grouping, action items. No network, no key.
 - **Optional Gemini summaries:** tap the settings icon and add your own API key(s), one per line. Keys stay on the device (secure storage) and go only to Google; the app rotates through them and falls back to local notes on failure. The transcript is sent to Google only after you confirm.
 - **Visual board:** notes become a mind-map with a title card, boxed topic columns, a To-do column, labelled arrows and a circle on the key point. Drag, edit, recolor, delete, connect cards, draw circles and boxes.

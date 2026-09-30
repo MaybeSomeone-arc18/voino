@@ -43,7 +43,7 @@ jobs:
           printf '%s' "$ARCHIVE_B64" | base64 --decode > "$RUNNER_TEMP/voino.zip"
           python3 - "$RUNNER_TEMP/voino.zip" <<'PY'
           import sys, zipfile
-          expected={'index.html','README.md','PITCH.md','package.json',
+          expected={'index.html','README.md','PITCH.md','package.json','LICENSE','build.cjs',
                     'src/app.js','src/board.js','src/notes.js','src/draw.js','src/style.css','src/speech.js',
                     'tests/board.test.js','tests/draw.test.js','tests/notes.test.js','tests/speech.test.js'}
           with zipfile.ZipFile(sys.argv[1]) as archive:

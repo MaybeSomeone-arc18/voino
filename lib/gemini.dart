@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 import 'logic.dart';
 
@@ -143,4 +144,96 @@ class GeminiClient {
     }
     throw last ?? GeminiException('Gemini failed.');
   }
+}
+
+// ---- Optional hosted summarizer (api/summarize.js on Vercel) ---------------------
+
+/// Build-time override, e.g. --dart-define=VOINO_API_URL=https://your-app.vercel.app/api/summarize
+const _proxyOverride = String.fromEnvironment('VOINO_API_URL');
+
+/// Web uses the same origin as the page; Android needs VOINO_API_URL. Null means no hosted option.
+Uri? defaultProxyUrl() {
+  if (_proxyOverride.isNotEmpty) return Uri.tryParse(_proxyOverride);
+  return kIsWeb ? Uri.base.resolve('/api/summarize') : null;
+}
+
+/// Maps the server's response shape onto the same validation the direct client uses.
+Note noteFromProxyJson(Map<String, dynamic> j, String transcript, String fallbackTitle) {
+  final actions = [
+    for (final a in (j['actions'] is List ? j['actions'] as List : []))
+      if (a is Map && a['text'] is String)
+        (a['owner'] is String && (a['owner'] as String).trim().isNotEmpty)
+            ? '${a['text']} (${a['owner']})'
+            : a['text'] as String
+      else if (a is String)
+        a,
+  ];
+  final topics = [
+    for (final t in (j['topics'] is List ? j['topics'] as List : []))
+      if (t is Map) {'name': t['name'], 'points': t['relatedPoints']},
+  ];
+  return noteFromGeminiJson({...j, 'actions': actions, 'topics': topics}, transcript, fallbackTitle);
+}
+
+class ProxyClient {
+  ProxyClient(this.url, {http.Client? client}) : _client = client ?? http.Client();
+  final Uri url;
+  final http.Client _client;
+
+  Future<Note> summarize(String transcript, {String title = 'New note'}) async {
+    http.Response res;
+    try {
+      res = await _client
+          .post(url, headers: {'content-type': 'application/json'}, body: jsonEncode({'transcript': transcript}))
+          .timeout(const Duration(seconds: 45));
+    } catch (_) {
+      throw GeminiException('Could not reach the Voino server.');
+    }
+    if (res.statusCode != 200) {
+      final msg = switch (res.statusCode) {
+        429 => 'The Voino server is busy or rate limited. Try again in a minute.',
+        413 => 'Transcript is too long for the hosted summarizer.',
+        404 => 'The hosted summarizer is not available here.',
+        _ => 'The Voino server is unavailable (${res.statusCode}).',
+      };
+      throw GeminiException(msg, res.statusCode);
+    }
+    try {
+      return noteFromProxyJson(jsonDecode(res.body) as Map<String, dynamic>, transcript, title);
+    } catch (_) {
+      throw GeminiException('The Voino server returned an unreadable answer.');
+    }
+  }
+}
+
+/// Tries the user's own Gemini keys, then the hosted summarizer, then the local extractor.
+/// Never throws: any AI failure ends in local notes with the reason in [how].
+Future<({Note note, String how})> summarizeWithFallback(
+  String src,
+  String title, {
+  List<String> keys = const [],
+  bool useKeys = false,
+  bool useProxy = false,
+  Uri? proxyUrl,
+  http.Client? client,
+}) async {
+  final errors = <String>[];
+  if (useKeys && keys.isNotEmpty) {
+    try {
+      return (note: await GeminiClient(keys, client: client).summarize(src, title: title), how: 'AI summary (Gemini, your key)');
+    } catch (e) {
+      errors.add('$e');
+    }
+  }
+  if (useProxy && proxyUrl != null) {
+    try {
+      return (note: await ProxyClient(proxyUrl, client: client).summarize(src, title: title), how: 'AI summary (Voino server)');
+    } catch (e) {
+      errors.add('$e');
+    }
+  }
+  return (
+    note: makeNotes(src, title),
+    how: errors.isEmpty ? 'Rule-based extract' : 'Rule-based extract (AI failed: ${errors.join('; ')})',
+  );
 }

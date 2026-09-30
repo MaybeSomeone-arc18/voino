@@ -143,29 +143,37 @@ class _HomeState extends State<Home> {
         !await confirm('Replace your edited board with new notes? Export it first if you want to keep it.')) {
       return;
     }
-    Note n;
-    var how = 'Rule-based extract';
-    if (settings.useAi && settings.keys.isNotEmpty) {
-      if (!settings.consented) {
-        if (!await confirm('Send this transcript to Google Gemini using your API key to write a summary? '
-            'It leaves your device. Choose Cancel to use the local extractor instead.')) {
-          _apply(makeNotes(src, title.text), src, how);
-          return;
-        }
+    var useKeys = settings.useAi && settings.keys.isNotEmpty;
+    var useProxy = settings.useProxy && defaultProxyUrl() != null;
+    if (useKeys && !settings.consented) {
+      if (await confirm('Send this transcript to Google Gemini using your API key to write a summary? '
+          'It leaves your device. Choose Cancel to skip it.')) {
         settings.consented = true;
         await settings.save();
+      } else {
+        useKeys = false;
       }
+    }
+    if (useProxy && !settings.proxyConsented) {
+      if (await confirm('Send this transcript to the Voino server, which forwards it to Google Gemini to write a summary? '
+          'It leaves your device; the server does not keep it. Choose Cancel to skip it.')) {
+        settings.proxyConsented = true;
+        await settings.save();
+      } else {
+        useProxy = false;
+      }
+    }
+    Note n;
+    var how = 'Rule-based extract';
+    if (useKeys || useProxy) {
       setState(() {
         busy = true;
-        status = 'Summarizing with Gemini...';
+        status = 'Summarizing with AI...';
       });
-      try {
-        n = await GeminiClient(settings.keys).summarize(src, title: title.text);
-        how = 'AI summary (Gemini)';
-      } catch (e) {
-        n = makeNotes(src, title.text);
-        how = 'Rule-based extract (Gemini failed: $e)';
-      }
+      final r = await summarizeWithFallback(src, title.text,
+          keys: settings.keys, useKeys: useKeys, useProxy: useProxy, proxyUrl: defaultProxyUrl());
+      n = r.note;
+      how = r.how;
       if (mounted) setState(() => busy = false);
     } else {
       n = makeNotes(src, title.text);
@@ -372,7 +380,7 @@ class _HomeState extends State<Home> {
     ]);
     return Scaffold(
       appBar: AppBar(title: const Text('voino'), backgroundColor: Colors.transparent, actions: [
-        IconButton(tooltip: 'Gemini settings', icon: Icon(settings.useAi && settings.keys.isNotEmpty ? Icons.auto_awesome : Icons.settings), onPressed: openSettings),
+        IconButton(tooltip: 'Gemini settings', icon: Icon((settings.useAi && settings.keys.isNotEmpty) || settings.useProxy ? Icons.auto_awesome : Icons.settings), onPressed: openSettings),
       ]),
       body: ListView(padding: const EdgeInsets.all(16), children: [
         const Text('Listen in real time.\nLeave with editable notes.',
@@ -436,6 +444,7 @@ class _HomeState extends State<Home> {
   Future<void> openSettings() async {
     final keys = TextEditingController(text: settings.keys.join('\n'));
     var use = settings.useAi;
+    var proxy = settings.useProxy;
     String? result;
     List<String> parse() => keys.text.split('\n').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
     await showDialog<void>(
@@ -451,6 +460,13 @@ class _HomeState extends State<Home> {
               const SizedBox(height: 8),
               TextField(controller: keys, maxLines: 4, decoration: const InputDecoration(border: OutlineInputBorder(), hintText: 'AIza...')),
               SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('Use Gemini for summaries'), value: use, onChanged: (v) => setD(() => use = v)),
+              if (defaultProxyUrl() != null)
+                SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Use Voino\'s hosted summarizer'),
+                    subtitle: const Text('No key needed. Sends the transcript to the Voino server, which forwards it to Gemini. Rate limited; used after your own keys.', style: TextStyle(fontSize: 11)),
+                    value: proxy,
+                    onChanged: (v) => setD(() => proxy = v)),
               if (result != null) Text(result!, style: const TextStyle(fontSize: 12)),
             ]),
           ),
@@ -469,7 +485,11 @@ class _HomeState extends State<Home> {
             ),
             TextButton(
               onPressed: () {
-                setState(() => settings = Settings());
+                setState(() {
+                  settings.keys = [];
+                  settings.useAi = false;
+                  settings.consented = false;
+                });
                 settings.save();
                 Navigator.pop(d);
               },
@@ -481,6 +501,7 @@ class _HomeState extends State<Home> {
                 setState(() {
                   settings.keys = list;
                   settings.useAi = use && list.isNotEmpty;
+                  settings.useProxy = proxy;
                 });
                 settings.save();
                 Navigator.pop(d);

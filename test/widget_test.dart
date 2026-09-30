@@ -171,4 +171,78 @@ void main() {
       expect(parseBoardJson('{"x":1}'), isNull);
     });
   });
+
+  group('hosted summarizer and fallback', () {
+    final url = Uri.parse('https://example.test/api/summarize');
+    final serverJson = {
+      'title': 'Bio',
+      'summary': 'Plants make energy.',
+      'points': ['Photosynthesis makes energy.', 'Chlorophyll absorbs light.'],
+      'actions': [
+        {'text': 'Submit the worksheet.', 'owner': 'Maya'},
+        {'text': 'Read chapter one.'},
+      ],
+      'topics': [
+        {'name': 'Plants', 'relatedPoints': [0, 1]},
+      ],
+      'links': [
+        {'from': 0, 'to': 1, 'label': 'leads to'},
+      ],
+    };
+
+    test('server shape maps onto Note', () {
+      final n = noteFromProxyJson(serverJson, 'src', 'New note');
+      expect(n.source, 'ai');
+      expect(n.actions, ['Submit the worksheet. (Maya)', 'Read chapter one.']);
+      expect(n.topics.single.points, [0, 1]);
+      expect(n.links.single.label, 'leads to');
+    });
+
+    test('proxy success is labelled as the Voino server', () async {
+      final client = MockClient((req) async {
+        expect(req.url, url);
+        expect(jsonDecode(req.body)['transcript'], 'hello world');
+        expect(req.headers.containsKey('x-goog-api-key'), isFalse); // the app never sends a key to the server
+        return http.Response(jsonEncode(serverJson), 200);
+      });
+      final r = await summarizeWithFallback('hello world', 'New note', useProxy: true, proxyUrl: url, client: client);
+      expect(r.how, 'AI summary (Voino server)');
+      expect(r.note.source, 'ai');
+    });
+
+    test('proxy failure falls back to rule-based notes with the reason', () async {
+      final client = MockClient((_) async => http.Response('{}', 429));
+      final r = await summarizeWithFallback('Plants use sunlight to grow.', 'New note', useProxy: true, proxyUrl: url, client: client);
+      expect(r.how, startsWith('Rule-based extract (AI failed:'));
+      expect(r.how, contains('rate limited'));
+      expect(r.note.source, 'rule');
+      expect(r.note.points, isNotEmpty);
+    });
+
+    test('network error and bad JSON both fall back', () async {
+      final down = MockClient((_) async => throw Exception('offline'));
+      expect((await summarizeWithFallback('Plants use sunlight to grow.', 'x', useProxy: true, proxyUrl: url, client: down)).note.source, 'rule');
+      final junk = MockClient((_) async => http.Response('not json', 200));
+      expect((await summarizeWithFallback('Plants use sunlight to grow.', 'x', useProxy: true, proxyUrl: url, client: junk)).note.source, 'rule');
+    });
+
+    test('own keys are tried first, then the server, then local', () async {
+      final calls = <String>[];
+      final client = MockClient((req) async {
+        calls.add(req.url.host);
+        if (req.url.host == 'generativelanguage.googleapis.com') return http.Response('no', 500);
+        return http.Response(jsonEncode(serverJson), 200);
+      });
+      final r = await summarizeWithFallback('hi there friend', 'x',
+          keys: ['k1'], useKeys: true, useProxy: true, proxyUrl: url, client: client);
+      expect(calls, ['generativelanguage.googleapis.com', 'example.test']);
+      expect(r.how, 'AI summary (Voino server)');
+    });
+
+    test('nothing enabled gives plain rule-based notes and no requests', () async {
+      final client = MockClient((_) async => fail('no request expected'));
+      final r = await summarizeWithFallback('Plants use sunlight to grow.', 'x', keys: ['k'], client: client);
+      expect(r.how, 'Rule-based extract');
+    });
+  });
 }

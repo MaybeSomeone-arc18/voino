@@ -323,6 +323,8 @@ class _HomeState extends State<Home> {
           Padding(
             padding: const EdgeInsets.fromLTRB(24, 8, 8, 0),
             child: Row(children: [
+              SvgPicture.asset('assets/logo/voino-logo.svg', height: 26, semanticsLabel: 'Voino logo'),
+              const SizedBox(width: 10),
               const Text('voino', style: TextStyle(fontSize: 18, letterSpacing: 4, fontWeight: FontWeight.w300, color: ink)),
               const Spacer(),
               if (view != 'listen')

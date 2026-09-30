@@ -64,6 +64,7 @@ flutter:
 
   assets:
     - assets/voino_bg.svg
+    - assets/logo/voino-logo.svg
 
   fonts:
     - family: Caveat

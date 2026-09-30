@@ -3,9 +3,9 @@
     "short_name": "voino",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#FDFBF6",
+    "theme_color": "#FDFBF6",
+    "description": "Turn conversations into editable notes and a visual board.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

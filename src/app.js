@@ -2,9 +2,15 @@ import {makeNotes,exportText} from './notes.js';
 import {toCards,safeCards,safeConnections} from './board.js';
 import {safeShapes,drawShapes} from './draw.js';
 import {speechSnapshot,stitchSpeech} from './speech.js';
+import { Capacitor } from '@capacitor/core';
+import { Purchases, LOG_LEVEL } from '@revenuecat/purchases-capacitor';
+import { SpeechRecognition as NativeSpeechRecognition } from '@capacitor-community/speech-recognition';
+
 const $ = id => document.getElementById(id);
-const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-let recognition, recording = false, startedAt = 0, clock, beforeSession = '', listening = false;
+const WebSpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+const isNative = Capacitor.isNativePlatform();
+let webRecognition, recording = false, startedAt = 0, clock, beforeSession = '', listening = false;
+let speechSessionId = 0;
 let retryTimer, networkRetries=0, networkRetryPending=false;
 const recognitionFailure=(reason,retries,active)=>active&&reason==='network'&&retries<2?{retry:true,delay:750*(retries+1)}:{retry:false,delay:0};
 const fields=['title','transcript','noteTitle','points','actions'];
@@ -34,23 +40,23 @@ $('downloadBoard').addEventListener('click',()=>{const blob=new Blob([JSON.strin
 
 const error=text=>{ $('error').textContent=text;$('error').hidden=!text };
 const formatTime=seconds=>`${String(Math.floor(seconds/60)).padStart(2,'0')}:${String(seconds%60).padStart(2,'0')}`;
-function finish(){recording=false;clearTimeout(retryTimer);networkRetryPending=false;clearInterval(clock);$('record').textContent='Start speaking';$('record').classList.remove('active');$('recorder').classList.remove('listening');$('recordStatus').textContent='Paused. Your transcript is editable.';save()}
-function begin(resume=false, automatic=false){
- if(!SpeechRecognition){error('This browser does not offer speech recognition. Use a supported Chrome browser, or paste a transcript to make notes.');return}
+function finish(){recording=false;clearTimeout(retryTimer);networkRetryPending=false;clearInterval(clock);$('record').textContent='Start speaking';$('record').classList.remove('active');$('recorder').classList.remove('listening');$('recordStatus').textContent='Paused. Your transcript is editable.';save();if(isNative){NativeSpeechRecognition.stop().catch(()=>{});}}
+function beginWeb(resume=false, automatic=false){
+ if(!WebSpeechRecognition){error('This browser does not offer speech recognition. Use a supported Chrome browser, or paste a transcript to make notes.');return}
  if(!resume){const typedName=$('title').value;clearSession();$('title').value=typedName;networkRetries=0}
  if(!automatic)networkRetries=0;
  clearTimeout(retryTimer);networkRetryPending=false;
  error('');const before=$('transcript').value.trim();beforeSession=resume&&before ? before+' ' : '';
- recognition=new SpeechRecognition();const current=recognition;recognition.lang=document.documentElement.lang||'en';recognition.continuous=true;recognition.interimResults=true;
- recognition.onresult=e=>{if(!recording||recognition!==current)return;networkRetries=0;const words=speechSnapshot(e.results);$('transcript').value=stitchSpeech(beforeSession,words);save()};
- recognition.onerror=e=>{
-  if(!recording||recognition!==current)return;
+ webRecognition=new WebSpeechRecognition();const current=webRecognition;webRecognition.lang=document.documentElement.lang||'en-US';webRecognition.continuous=true;webRecognition.interimResults=true;
+ webRecognition.onresult=e=>{if(!recording||webRecognition!==current)return;networkRetries=0;const words=speechSnapshot(e.results);$('transcript').value=stitchSpeech(beforeSession,words);save()};
+ webRecognition.onerror=e=>{
+  if(!recording||webRecognition!==current)return;
   const decision=recognitionFailure(e.error,networkRetries,recording);
   if(decision.retry){
     networkRetries++;networkRetryPending=true;listening=false;clearInterval(clock);
     $('recordStatus').textContent=`Speech service disconnected. Retrying ${networkRetries}/2...`;
     error('Browser speech service is unreachable right now. Retrying briefly; your words are kept.');
-    retryTimer=setTimeout(()=>{if(!recording||recognition!==current)return;beforeSession=$('transcript').value.trim();begin(true,true)},decision.delay);
+    retryTimer=setTimeout(()=>{if(!recording||webRecognition!==current)return;beforeSession=$('transcript').value.trim();begin(true,true)},decision.delay);
     return;
   }
   const denied=e.error==='not-allowed'||e.error==='service-not-allowed';
@@ -59,13 +65,127 @@ function begin(resume=false, automatic=false){
   finish();$('recordStatus').textContent=network?'Speech service unavailable. Your transcript is safe to edit.':'Speech paused. Your transcript is editable.';
   if(!denied)$('record').textContent='Continue listening';
  };
- recognition.onend=()=>{if(recognition!==current)return;listening=false;if(recording&&!networkRetryPending){error('Speech recognition stopped. Press Continue listening to resume this session.');finish();$('record').textContent='Continue listening'}};
- try{recognition.start();listening=true;recording=true;startedAt=Date.now();$('record').textContent='Stop listening';$('record').classList.add('active');$('recorder').classList.add('listening');$('recordStatus').textContent='Listening for words...';clock=setInterval(()=>$('timer').textContent=formatTime(Math.floor((Date.now()-startedAt)/1000)),1000)}catch{error('Could not start the microphone. Try again or paste a transcript.');finish()}
+ webRecognition.onend=()=>{if(webRecognition!==current)return;listening=false;if(recording&&!networkRetryPending){error('Speech recognition stopped. Press Continue listening to resume this session.');finish();$('record').textContent='Continue listening'}};
+ try{webRecognition.start();listening=true;recording=true;startedAt=Date.now();$('record').textContent='Stop listening';$('record').classList.add('active');$('recorder').classList.add('listening');$('recordStatus').textContent='Listening for words...';clock=setInterval(()=>$('timer').textContent=formatTime(Math.floor((Date.now()-startedAt)/1000)),1000)}catch{error('Could not start the microphone. Try again or paste a transcript.');finish()}
 }
-$('support').textContent=SpeechRecognition?'Speech recognition available':'Manual transcript mode';
-$('record').addEventListener('click',()=>{if(recording){recording=false;clearTimeout(retryTimer);if(listening)recognition.stop();finish()}else begin($('record').textContent==='Continue listening')});
+async function beginNative(resume=false){
+  try {
+    const { available } = await NativeSpeechRecognition.available();
+    if (!available) { error('Native speech recognition is not available on this device.'); return; }
+    let perm = await NativeSpeechRecognition.checkPermissions();
+    if (perm.speechRecognition !== 'granted') {
+       perm = await NativeSpeechRecognition.requestPermissions();
+       if (perm.speechRecognition !== 'granted') { error('Microphone access was denied. Allow it in Android settings, or paste a transcript.'); return; }
+    }
+    if(!resume){ const typedName=$('title').value; clearSession(); $('title').value=typedName; }
+    error('');
+    const before=$('transcript').value.trim();
+    beforeSession=resume&&before ? before+' ' : '';
+    
+    speechSessionId++;
+    const currentSession = speechSessionId;
+    
+    await NativeSpeechRecognition.removeAllListeners();
+    await NativeSpeechRecognition.addListener('partialResults', (data) => {
+      if (!recording || speechSessionId !== currentSession) return;
+      if (data.matches && data.matches.length > 0) {
+        $('transcript').value = stitchSpeech(beforeSession, data.matches[0]);
+        save();
+      }
+    });
+    await NativeSpeechRecognition.addListener('listeningState', (data) => {
+      if (speechSessionId !== currentSession) return;
+      if (data.status === 'stopped' && recording) {
+        listening = false;
+        error('Speech recognition stopped. Press Continue listening to resume.');
+        finish();
+        $('record').textContent='Continue listening';
+      }
+    });
+    
+    await NativeSpeechRecognition.start({ language: "en-US", partialResults: true, popup: false });
+    
+    listening=true; recording=true; startedAt=Date.now();
+    $('record').textContent='Stop listening'; $('record').classList.add('active');
+    $('recorder').classList.add('listening'); $('recordStatus').textContent='Listening for words...';
+    clock=setInterval(()=>$('timer').textContent=formatTime(Math.floor((Date.now()-startedAt)/1000)),1000);
+  } catch(e) {
+    error('Could not start the microphone (' + e.message + '). Try again or paste a transcript.');
+    finish();
+  }
+}
+async function begin(resume=false, automatic=false) {
+  if (isNative) { await beginNative(resume); } else { beginWeb(resume, automatic); }
+}
+
+$('support').textContent=isNative ? 'Native Android Speech available' : (WebSpeechRecognition?'Speech recognition available':'Manual transcript mode');
+$('record').addEventListener('click',()=>{if(recording){recording=false;clearTimeout(retryTimer);if(listening&&!isNative&&webRecognition)webRecognition.stop();finish()}else begin($('record').textContent==='Continue listening')});
 $('generate').addEventListener('click',()=>{error('');const source=$('transcript').value.trim();if(!source){error('Speak, paste or type some words first.');return}if((cards.length||shapes.length)&&!confirm('Replace your current board with new notes? Export it first if you want to keep it.'))return;const n=makeNotes(source,$('title').value);$('noteTitle').value=n.title;$('points').value=n.points.join('\n\n');$('actions').value=n.actions.join('\n\n');cards=toCards(n);connections=[];shapes=[];renderBoard();save();saveBoard();$('noteTitle').focus()});
 const currentNote=()=>({title:$('noteTitle').value.trim()||'New note',points:$('points').value.split(/\n\s*\n|\n/).map(x=>x.trim()).filter(Boolean),actions:$('actions').value.split(/\n\s*\n|\n/).map(x=>x.trim()).filter(Boolean),transcript:$('transcript').value.trim()});
 $('copy').addEventListener('click',async()=>{try{await navigator.clipboard.writeText(exportText(currentNote()));$('copy').textContent='Copied';setTimeout(()=>$('copy').textContent='Copy notes',1800)}catch{error('Clipboard unavailable. Download the note instead.')}});
 $('download').addEventListener('click',()=>{const n=currentNote(),blob=new Blob([exportText(n)],{type:'text/plain;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=(n.title.replace(/[^a-z0-9-]+/gi,'-').slice(0,45)||'voino')+'.txt';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)});
 $('reset').addEventListener('click',()=>{if(!confirm('Clear this guest session? Download notes or the board first if you want to keep them.'))return;if(recording){recording=false;recognition.stop();finish()}clearSession();$('record').textContent='Start speaking';$('recordStatus').textContent='Ready when you are'});
+
+function activatePro() {
+  const badge = $('proBadge');
+  if (badge) {
+    badge.textContent = 'PRO MODE · HISTORY SYNC COMING SOON';
+    badge.style.background = '#dbeafe';
+    badge.style.color = '#1e40af';
+    badge.style.borderColor = '#93c5fd';
+  }
+  const buyBtn = $('buyPro');
+  if (buyBtn) buyBtn.style.display = 'none';
+  const saveState = $('saveState');
+  if (saveState) saveState.textContent = 'Pro session - history coming soon';
+}
+
+if (Capacitor.isNativePlatform()) {
+  $('buyPro').style.display = 'inline-block';
+  Purchases.setLogLevel({ level: LOG_LEVEL.DEBUG });
+  
+  console.log('RevenueCat: Configuring SDK with API key ending in', String(process.env.REVENUECAT_KEY).slice(-4));
+  Purchases.configure({ apiKey: process.env.REVENUECAT_KEY });
+  
+  console.log('RevenueCat: Fetching initial CustomerInfo...');
+  Purchases.getCustomerInfo().then(info => {
+    console.log('RevenueCat: CustomerInfo retrieved', info);
+    if (info.entitlements.active['voino_pro']) {
+      console.log('RevenueCat: voino_pro entitlement is ACTIVE at startup');
+      activatePro();
+    } else {
+      console.log('RevenueCat: voino_pro entitlement is NOT active at startup');
+    }
+  }).catch(e => console.error('RevenueCat Error getting customer info:', e));
+
+  $('buyPro').addEventListener('click', async () => {
+    try {
+      console.log('RevenueCat: Fetching offerings...');
+      const offerings = await Purchases.getOfferings();
+      console.log('RevenueCat: Offerings received', offerings);
+      
+      if (offerings.current !== null && offerings.current.availablePackages.length !== 0) {
+        console.log('RevenueCat: Starting purchase for package', offerings.current.availablePackages[0].identifier);
+        const { customerInfo } = await Purchases.purchasePackage({ aPackage: offerings.current.availablePackages[0] });
+        
+        console.log('RevenueCat: Purchase successful, checking updated CustomerInfo:', customerInfo);
+        if (customerInfo.entitlements.active['voino_pro']) {
+          console.log('RevenueCat: voino_pro entitlement UNLOCKED via purchase!');
+          activatePro();
+        } else {
+          console.log('RevenueCat: Purchase succeeded but voino_pro entitlement missing in result');
+        }
+      } else {
+        console.warn('RevenueCat: No current offerings or packages available in Test Store');
+        alert("No offerings available from Test Store.");
+      }
+    } catch (e) {
+      if (e.userCancelled) {
+         console.log('RevenueCat: Purchase cancelled by user, Pro not unlocked.');
+      } else {
+         console.error('RevenueCat: Purchase failed', e);
+         alert("Purchase error: " + e.message);
+      }
+    }
+  });
+}

@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'package:file_picker/file_picker.dart';
 import 'package:file_saver/file_saver.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -13,6 +13,8 @@ import 'gemini.dart';
 import 'settings.dart';
 import 'whisper_stub.dart' if (dart.library.js_interop) 'whisper_web.dart';
 import 'logic.dart';
+import 'pro_access.dart';
+import 'revenuecat_backend.dart';
 import 'live_transcript.dart';
 
 void main() => runApp(const VoinoApp());
@@ -39,7 +41,8 @@ class Home extends StatefulWidget {
   State<Home> createState() => _HomeState();
 }
 
-class _HomeState extends State<Home> {
+class _HomeState extends State<Home> with WidgetsBindingObserver {
+  late final ProAccess pro;
   final title = TextEditingController(), transcript = TextEditingController();
   final speech = SpeechToText();
   bool speechReady = false, listening = false, busy = false;
@@ -58,6 +61,13 @@ class _HomeState extends State<Home> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    pro = ProAccess(
+      android: !kIsWeb && defaultTargetPlatform == TargetPlatform.android,
+      backend: RevenueCatBackend(),
+    );
+    pro.addListener(_proChanged);
+    pro.init();
     Settings.load().then((v) => setState(() => settings = v));
     speech
         .initialize(
@@ -70,6 +80,78 @@ class _HomeState extends State<Home> {
               speechReady = ok;
               if (!ok && WhisperEngine.supported) engine = 'whisper'; // no device recognizer: use Whisper
             }));
+  }
+
+  void _proChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) pro.refresh();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    pro.removeListener(_proChanged);
+    pro.dispose();
+    title.dispose();
+    transcript.dispose();
+    board.dispose();
+    super.dispose();
+  }
+
+  Future<bool> requireBoardFiles() async {
+    if (!pro.android) return true;
+    await pro.refresh();
+    if (pro.canUseBoardFiles) return true;
+    if (mounted) await openPro();
+    return pro.canUseBoardFiles;
+  }
+
+  Future<void> copyBoardJson() async {
+    if (await requireBoardFiles()) await copy(boardJson(), 'Board JSON');
+  }
+
+  Future<void> openPro() async {
+    List<ProOffer> offers = [];
+    try {
+      offers = await pro.offers();
+    } catch (_) {
+      if (mounted) _msg('Could not load test packages. Free notes still work.');
+    }
+    if (!mounted) return;
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (d) => AlertDialog(
+        title: const Text('Test Pro - board files'),
+        content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('Android Test Store only. No real charge. Unlock JSON save, copy and open. Listening, notes, board editing and text export stay free. No history or cloud sync.'),
+          const SizedBox(height: 12),
+          Text(pro.message),
+          if (pro.busy) const Text('Checking access...'),
+          if (!pro.ready) const Text('Build configuration or connection is unavailable.'),
+          if (pro.ready && offers.isEmpty) const Text('No current test package available.'),
+          for (final o in offers)
+            TextButton(
+              onPressed: pro.busy ? null : () => Navigator.pop(d, o.id),
+              child: Text('Test ${o.title} - ${o.price} (sandbox metadata)'),
+            ),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(d), child: const Text('Cancel')),
+          TextButton(onPressed: !pro.ready || pro.busy ? null : () => Navigator.pop(d, '__restore'), child: const Text('Restore test purchases')),
+        ],
+      ),
+    );
+    if (choice == null) return;
+    if (choice == '__restore') {
+      await pro.restore();
+    } else {
+      await pro.buy(choice);
+    }
+    if (mounted) _msg(pro.message);
   }
 
   void _msg(String m) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
@@ -304,7 +386,7 @@ class _HomeState extends State<Home> {
       const SizedBox(height: 12),
       Wrap(spacing: 8, children: [
         OutlinedButton(onPressed: () => copy(exportText(currentNote()), 'Notes'), child: const Text('Copy notes')),
-        OutlinedButton(onPressed: () => copy(boardJson(), 'Board JSON'), child: const Text('Copy board JSON')),
+        OutlinedButton(onPressed: copyBoardJson, child: const Text('Copy board JSON')),
         OutlinedButton(onPressed: downloadBoard, child: const Text('Download board JSON')),
         OutlinedButton(onPressed: openBoardFile, child: const Text('Open board file')),
         OutlinedButton(onPressed: importBoard, child: const Text('Paste board JSON')),
@@ -327,6 +409,9 @@ class _HomeState extends State<Home> {
               const SizedBox(width: 10),
               const Text('voino', style: TextStyle(fontSize: 18, letterSpacing: 4, fontWeight: FontWeight.w300, color: ink)),
               const Spacer(),
+              if (pro.android)
+                TextButton(onPressed: pro.busy ? null : openPro,
+                    child: Text(pro.active ? 'Test Pro active' : 'Test Pro', style: const TextStyle(color: ink))),
               if (view != 'listen')
                 TextButton(onPressed: () => setState(() => view = 'listen'), child: const Text('Listen', style: TextStyle(color: ink))),
               IconButton(
@@ -455,6 +540,7 @@ class _HomeState extends State<Home> {
   }
 
   Future<void> downloadBoard() async {
+    if (!await requireBoardFiles()) return;
     if (cards.isEmpty && shapes.isEmpty) return _msg('Nothing on the board to download yet.');
     try {
       final name = title.text.trim().isEmpty ? 'voino-board' : title.text.trim().replaceAll(RegExp(r'[^A-Za-z0-9-]+'), '-');
@@ -467,6 +553,7 @@ class _HomeState extends State<Home> {
   }
 
   Future<void> openBoardFile() async {
+    if (!await requireBoardFiles()) return;
     try {
       final files = await FilePicker.pickFiles(type: FileType.custom, allowedExtensions: ['json']);
       if (files.isEmpty) return;
@@ -479,6 +566,7 @@ class _HomeState extends State<Home> {
   }
 
   Future<void> importBoard() async {
+    if (!await requireBoardFiles()) return;
     final ctl = TextEditingController();
     final raw = await showDialog<String>(
         context: context,

@@ -53,7 +53,7 @@ jobs:
               assert all(((i.external_attr >> 16) & 0o170000) != 0o120000 for i in archive.infolist()), 'Symlink not allowed'
               archive.extractall('.')
           PY
-          git add index.html README.md PITCH.md package.json src tests
+          git add index.html README.md PITCH.md package.json LICENSE build.cjs src tests
           test -n "$(git diff --cached --name-only)"
           if git diff --cached --name-only | grep -E '^\.github/'; then exit 1; fi
           npm test

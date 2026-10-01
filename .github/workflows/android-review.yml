@@ -30,6 +30,8 @@ jobs:
           cache: true
       - name: Resolve dependencies
         run: flutter pub get
+      - name: Node API tests
+        run: node --test tests/api.test.js
       - name: Flutter tests
         run: flutter test --reporter expanded
       - name: Build Flutter web preview

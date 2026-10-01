@@ -133,6 +133,7 @@ function validate(raw, transcript) {
   const links = [];
   for (const l of (Array.isArray(r.links) ? r.links : []).slice(0, 30)) {
     if (!l || !remap.has(l.from) || !remap.has(l.to) || l.from === l.to) continue;
+    if (remap.get(l.from) === remap.get(l.to)) continue;
     links.push({ from: remap.get(l.from), to: remap.get(l.to), label: clean(l.label).slice(0, 60) });
   }
 

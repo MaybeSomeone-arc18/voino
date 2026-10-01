@@ -390,7 +390,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
         'It leaves your device. Choose Cancel to skip it.',
       )) {
         settings.consented = true;
-        await settings.save();
+        await persistSettings();
       } else {
         useKeys = false;
       }
@@ -401,7 +401,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
         'It leaves your device; the server does not keep it. Choose Cancel to skip it.',
       )) {
         settings.proxyConsented = true;
-        await settings.save();
+        await persistSettings();
       } else {
         useProxy = false;
       }
@@ -1041,6 +1041,17 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     _draftChanged();
   }
 
+  Future<void> persistSettings() async {
+    try {
+      await settings.save();
+    } catch (_) {
+      if (mounted)
+        _msg(
+          'Settings could not be saved on this device. Changes apply only to this session.',
+        );
+    }
+  }
+
   Future<void> openSettings() async {
     final keys = TextEditingController(text: settings.keys.join('\n'));
     var use = settings.useAi;
@@ -1119,7 +1130,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                   settings.useAi = false;
                   settings.consented = false;
                 });
-                settings.save();
+                persistSettings();
                 Navigator.pop(d);
               },
               child: const Text('Remove keys'),
@@ -1132,7 +1143,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                   settings.useAi = use && list.isNotEmpty;
                   settings.useProxy = proxy;
                 });
-                settings.save();
+                persistSettings();
                 Navigator.pop(d);
               },
               child: const Text('Save'),

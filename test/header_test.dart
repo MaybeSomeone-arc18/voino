@@ -60,8 +60,12 @@ void main() {
           final boundary =
               capture.currentContext!.findRenderObject()
                   as RenderRepaintBoundary;
-          final image = await boundary.toImage(pixelRatio: 1);
-          final png = await image.toByteData(format: ui.ImageByteFormat.png);
+          final image = (await tester.runAsync(
+            () => boundary.toImage(pixelRatio: 1),
+          ))!;
+          final png = await tester.runAsync(
+            () => image.toByteData(format: ui.ImageByteFormat.png),
+          );
           print('HEADER_PNG:${base64Encode(png!.buffer.asUint8List())}');
           image.dispose();
         }

@@ -12,9 +12,10 @@ class MinimalNotes extends StatelessWidget {
     required this.onBoard,
     required this.onFile,
     required this.busy,
+    this.saveStatus = 'Guest notes are not saved automatically.',
   });
   final Note note;
-  final String source;
+  final String source, saveStatus;
   final Widget capture;
   final VoidCallback onCopy, onBoard;
   final ValueChanged<String> onFile;
@@ -162,9 +163,9 @@ class MinimalNotes extends StatelessWidget {
               children: [capture],
             ),
             const SizedBox(height: 8),
-            const Text(
-              'Check extracts against the transcript. Guest notes are not saved automatically.',
-              style: TextStyle(fontSize: 11, color: Colors.black54),
+            Text(
+              'Check extracts against the transcript. $saveStatus',
+              style: const TextStyle(fontSize: 11, color: Colors.black54),
             ),
           ],
         ),

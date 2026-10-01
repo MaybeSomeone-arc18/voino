@@ -501,93 +501,99 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    final capture = _panel('01 / CAPTURE', 'Listen to the discussion', [
-      TextField(
-        controller: title,
-        decoration: const InputDecoration(
-          labelText: 'Give it a name',
-          border: OutlineInputBorder(),
+    final capture = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextField(
+          controller: title,
+          decoration: const InputDecoration(
+            labelText: 'Give it a name',
+            border: OutlineInputBorder(),
+          ),
         ),
-      ),
-      if (kIsWeb && WhisperEngine.supported) ...[
+        if (kIsWeb && WhisperEngine.supported) ...[
+          const SizedBox(height: 12),
+          SegmentedButton<String>(
+            segments: [
+              const ButtonSegment(
+                value: 'whisper',
+                label: Text('Whisper (local)'),
+              ),
+              ButtonSegment(
+                value: 'device',
+                label: const Text('Device speech'),
+                enabled: speechReady,
+              ),
+            ],
+            selected: {engine},
+            onSelectionChanged: listening
+                ? null
+                : (v) => setState(() => engine = v.first),
+          ),
+        ],
         const SizedBox(height: 12),
-        SegmentedButton<String>(
-          segments: [
-            const ButtonSegment(
-              value: 'whisper',
-              label: Text('Whisper (local)'),
+        Row(
+          children: [
+            FilledButton.icon(
+              onPressed:
+                  (engine == 'whisper' ? WhisperEngine.supported : speechReady)
+                  ? toggleListen
+                  : null,
+              icon: Icon(listening ? Icons.stop : Icons.mic),
+              label: Text(
+                listening
+                    ? 'Stop listening'
+                    : (transcript.text.isEmpty
+                          ? 'Start speaking'
+                          : 'Continue listening'),
+              ),
             ),
-            ButtonSegment(
-              value: 'device',
-              label: const Text('Device speech'),
-              enabled: speechReady,
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                micNote.isNotEmpty
+                    ? micNote
+                    : (engine == 'whisper' || speechReady)
+                    ? (listening
+                          ? 'Listening for words...'
+                          : 'Speech available')
+                    : 'Type / paste mode (speech unavailable)',
+                style: const TextStyle(fontSize: 12),
+              ),
             ),
           ],
-          selected: {engine},
-          onSelectionChanged: listening
-              ? null
-              : (v) => setState(() => engine = v.first),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: transcript,
+          maxLines: 9,
+          onChanged: (_) => setState(() {}),
+          decoration: const InputDecoration(
+            labelText: 'What Voino heard (you can fix mistakes)',
+            alignLabelWithHint: true,
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 8,
+          children: [
+            FilledButton.tonal(
+              onPressed: busy ? null : generate,
+              child: Text(busy ? 'Working...' : 'Make editable board'),
+            ),
+            OutlinedButton(onPressed: clearAll, child: const Text('Clear all')),
+          ],
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          "Speech recognition may use the device or browser vendor's online service. Ask permission before recording other people.",
+          style: TextStyle(fontSize: 11),
         ),
       ],
-      const SizedBox(height: 12),
-      Row(
-        children: [
-          FilledButton.icon(
-            onPressed:
-                (engine == 'whisper' ? WhisperEngine.supported : speechReady)
-                ? toggleListen
-                : null,
-            icon: Icon(listening ? Icons.stop : Icons.mic),
-            label: Text(
-              listening
-                  ? 'Stop listening'
-                  : (transcript.text.isEmpty
-                        ? 'Start speaking'
-                        : 'Continue listening'),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              micNote.isNotEmpty
-                  ? micNote
-                  : (engine == 'whisper' || speechReady)
-                  ? (listening ? 'Listening for words...' : 'Speech available')
-                  : 'Type / paste mode (speech unavailable)',
-              style: const TextStyle(fontSize: 12),
-            ),
-          ),
-        ],
-      ),
-      const SizedBox(height: 12),
-      TextField(
-        controller: transcript,
-        maxLines: 9,
-        onChanged: (_) => setState(() {}),
-        decoration: const InputDecoration(
-          labelText: 'What Voino heard (you can fix mistakes)',
-          alignLabelWithHint: true,
-          border: OutlineInputBorder(),
-        ),
-      ),
-      const SizedBox(height: 12),
-      Wrap(
-        spacing: 8,
-        children: [
-          FilledButton.tonal(
-            onPressed: busy ? null : generate,
-            child: Text(busy ? 'Working...' : 'Make editable board'),
-          ),
-          OutlinedButton(onPressed: clearAll, child: const Text('Clear all')),
-        ],
-      ),
-      const SizedBox(height: 8),
-      const Text(
-        "Speech recognition may use the device or browser vendor's online service. Ask permission before recording other people.",
-        style: TextStyle(fontSize: 11),
-      ),
-    ]);
+    );
     final notes = MinimalNotes(
+      showActions: false,
       note: currentNote(),
       source: noteSource,
       capture: capture,
@@ -618,13 +624,14 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
       backgroundColor: paper,
       body: Stack(
         children: [
-          Positioned.fill(
-            child: SvgPicture.asset(
-              'assets/voino_bg.svg',
-              fit: BoxFit.cover,
-              alignment: Alignment.topCenter,
+          if (view == 'listen' || view == 'board')
+            Positioned.fill(
+              child: SvgPicture.asset(
+                'assets/voino_bg.svg',
+                fit: BoxFit.cover,
+                alignment: Alignment.topCenter,
+              ),
             ),
-          ),
           if (view != 'listen')
             Positioned.fill(
               child: ColoredBox(color: paper.withValues(alpha: 0.86)),
@@ -715,6 +722,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                           ),
                   ),
                 ),
+                if (view == 'notes') _notesActions(),
               ],
             ),
           ),
@@ -723,12 +731,76 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     );
   }
 
+  Widget _notesActions() => Container(
+    decoration: const BoxDecoration(
+      color: paper,
+      border: Border(top: BorderSide(color: Color(0xFFDCD5C8))),
+    ),
+    padding: const EdgeInsets.fromLTRB(24, 14, 24, 16),
+    child: Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 720),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: ink,
+                      minimumSize: const Size(0, 47),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(7),
+                      ),
+                    ),
+                    onPressed: () => copy(exportText(currentNote()), 'Notes'),
+                    child: const Text('Copy notes'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: FilledButton(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: ink,
+                      foregroundColor: paper,
+                      minimumSize: const Size(0, 47),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(7),
+                      ),
+                    ),
+                    onPressed: busy ? null : generate,
+                    child: Text(busy ? 'Working...' : 'Make board'),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text(
+              draft.error.isNotEmpty
+                  ? draft.error
+                  : !draft.ready
+                  ? 'Opening local draft...'
+                  : draft.saved
+                  ? 'Saved on this device · One draft'
+                  : draftTouched
+                  ? 'Saving on this device...'
+                  : 'One draft saves here · No cloud backup',
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 11, color: Colors.black54),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+
   static const paper = Color(0xFFF4EEE1),
       ink = Color(0xFF2B2A28),
       gold = Color(0xFFC4903F);
 
   Widget _tabs() => Row(
-    mainAxisAlignment: MainAxisAlignment.center,
+    mainAxisAlignment: MainAxisAlignment.start,
     children: [
       for (final t in const [
         ['notes', 'Notes'],
@@ -741,7 +813,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
             style: TextStyle(
               color: view == t[0] ? ink : Colors.black45,
               fontWeight: view == t[0] ? FontWeight.w600 : FontWeight.w400,
-              letterSpacing: 1.5,
+              letterSpacing: 0,
             ),
           ),
         ),
@@ -1070,22 +1142,6 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
       ),
     );
   }
-
-  Widget _panel(String step, String heading, List<Widget> children) => Card(
-    color: Colors.white,
-    child: Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(step, style: const TextStyle(fontSize: 11, letterSpacing: 1.2)),
-          Text(heading, style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 12),
-          ...children,
-        ],
-      ),
-    ),
-  );
 
   Widget _boardSection() => BoardPanel(
     controller: board,

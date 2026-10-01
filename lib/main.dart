@@ -1133,6 +1133,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
 
 /// Header actions wrap rather than push the settings button off a narrow phone.
 class VoinoHeader extends StatelessWidget {
+  static const ink = Color(0xFF2B2A28);
   const VoinoHeader({
     super.key,
     required this.android,

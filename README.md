@@ -4,7 +4,7 @@
 
 Built with Flutter for **Android** and the **web**. Local-first: notes work with no account, no server and no API key. AI summaries are optional.
 
-> **Status: prototype.** Unit and widget tests pass (41 Flutter, 12 Node). The web build is verified in a browser. Live speech on a real phone, the Android build and the Vercel deployment have not been verified end to end yet. See [Known limitations](#known-limitations).
+> **Status: prototype.** Latest completed review baseline passed 60 Flutter tests and 12 Node tests; CI built a release web preview and Android debug Test Store APK. New mobile board/settings fixes are under review tests. Physical Android speech, storage and purchase acceptance are still pending. Main/site may lag the review branch. Production signing and live billing are not complete. See [Known limitations](#known-limitations).
 
 ## How it works
 
@@ -163,3 +163,39 @@ Store setup. A production billing configuration and release/signing review are
 separate work. Test Store acceptance for Shipaton has not been confirmed by the
 organizer. Real-device purchase and save/open acceptance must be recorded before
 claiming those paths work.
+
+### Foreground listening sessions
+
+Device speech keeps the user's listening intent across normal silence/session
+ends and attempts to restart after a short visible "Reconnecting microphone"
+gap. Android's native recognizer still has OS-imposed timeouts and can beep on
+restart; this is not gapless recording. Stop cancels queued restarts. Network,
+permission and other non-silence errors stop the session with a visible message.
+Backgrounding the app pauses capture and requires a tap to resume. Web Whisper
+uses its existing local chunk loop; it is not available in the Android APK.
+
+Notes shows only nonempty sections. Expand Transcript to edit/listen; use the
+Board files overflow menu for JSON copy/save/open/paste with the same Pro checks.
+
+### Local recovery draft
+
+Voino keeps one device-local recovery draft of your title, transcript, extracted
+notes and edited board. This is free, separate from Pro board-file export, and
+not history or cloud sync. Saves run after a short pause in edits and on app
+background. A saved/error status is shown in Notes. Clearing all also clears
+the recovery draft. Clearing app data, uninstalling, private browsing or storage
+errors can still lose it: copy/export important work. Do not claim phone recovery
+acceptance until close/reopen has been tested on the device.
+
+### Notes reading layout
+
+Notes now uses the original paper/ink/gold palette with plain reading rows,
+section dividers, a collapsible transcript and fixed Copy notes/Make board
+actions. The decorative background stays on Listen and Board, not Notes.
+
+
+### Mobile board review and QA
+
+Phones use Select, Move, + Note and More instead of ten wrapping controls. Move pans without editing cards; selected elements show Edit/Delete. Zoom buttons and Undo remain available. More contains circles, boxes, connections, fit and board files. Warm colors remain. This is Voino's own board, not Excalidraw file compatibility or collaboration.
+
+Settings storage failure now reports that changes apply only to the current session instead of swallowing the failure. A failed write can be partial; re-save when storage is available. No account sync is claimed: Firebase project access/rules and two-user isolation must be verified before linking cloud data.

@@ -107,14 +107,16 @@ function validate(raw, transcript) {
   const r = raw && typeof raw === 'object' ? raw : {};
 
   // Points: drop any with numbers the transcript never said, and remap indexes.
-  const rawPoints = strList(r.points, 20);
+  const rawPoints = (Array.isArray(r.points) ? r.points : []).slice(0, 20);
   const remap = new Map();
   const points = [];
   rawPoints.forEach((p, i) => {
-    if (!ungrounded(p, nums)) {
-      remap.set(i, points.length);
-      points.push(p);
-    }
+    if (typeof p !== 'string') return;
+    p = clean(p);
+    if (!p || ungrounded(p, nums)) return;
+    let mapped = points.indexOf(p);
+    if (mapped < 0) { mapped = points.length; points.push(p); }
+    remap.set(i, mapped);
   });
 
   const topics = [];
@@ -131,6 +133,7 @@ function validate(raw, transcript) {
   const links = [];
   for (const l of (Array.isArray(r.links) ? r.links : []).slice(0, 30)) {
     if (!l || !remap.has(l.from) || !remap.has(l.to) || l.from === l.to) continue;
+    if (remap.get(l.from) === remap.get(l.to)) continue;
     links.push({ from: remap.get(l.from), to: remap.get(l.to), label: clean(l.label).slice(0, 60) });
   }
 
@@ -226,6 +229,7 @@ function makeHandler({ env = process.env, fetchImpl = fetch, limiter = createRat
       return res.status(429).json({ error: 'rate_limited', retryAfter: rl.retryAfter });
     }
 
+    if (typeof req.body === 'string' && Buffer.byteLength(req.body, 'utf8') > MAX_BODY_BYTES) return res.status(413).json({ error: 'too_long', max: MAX_TRANSCRIPT });
     if (Number(req.headers?.['content-length'] || 0) > MAX_BODY_BYTES) return res.status(413).json({ error: 'too_long', max: MAX_TRANSCRIPT });
     let body = req.body;
     if (typeof body === 'string') {
@@ -235,7 +239,8 @@ function makeHandler({ env = process.env, fetchImpl = fetch, limiter = createRat
         body = null;
       }
     }
-    const transcript = clean(body?.transcript);
+    if (typeof body?.transcript !== 'string') return res.status(400).json({ error: 'invalid_transcript' });
+    const transcript = clean(body.transcript);
     if (!transcript) return res.status(400).json({ error: 'empty_transcript' });
     if (transcript.length > MAX_TRANSCRIPT) return res.status(413).json({ error: 'too_long', max: MAX_TRANSCRIPT });
 

@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:ui' as ui;
+import 'package:flutter/rendering.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:voino/main.dart';
@@ -13,25 +16,29 @@ void main() {
         addTearDown(tester.view.resetPhysicalSize);
         addTearDown(tester.view.resetDevicePixelRatio);
         var pro = 0, listen = 0, settings = 0;
+        final capture = GlobalKey();
         await tester.pumpWidget(
           MaterialApp(
-            home: MediaQuery(
-              data: MediaQueryData(
-                size: Size(width, 844),
-                textScaler: TextScaler.linear(scale),
-              ),
-              child: Scaffold(
-                body: Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 8, 8, 0),
-                  child: VoinoHeader(
-                    android: true,
-                    active: true,
-                    busy: false,
-                    showListen: true,
-                    onPro: () => pro++,
-                    onListen: () => listen++,
-                    onSettings: () => settings++,
-                    settingsIcon: Icons.tune,
+            home: RepaintBoundary(
+              key: capture,
+              child: MediaQuery(
+                data: MediaQueryData(
+                  size: Size(width, 844),
+                  textScaler: TextScaler.linear(scale),
+                ),
+                child: Scaffold(
+                  body: Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 8, 8, 0),
+                    child: VoinoHeader(
+                      android: true,
+                      active: true,
+                      busy: false,
+                      showListen: true,
+                      onPro: () => pro++,
+                      onListen: () => listen++,
+                      onSettings: () => settings++,
+                      settingsIcon: Icons.tune,
+                    ),
                   ),
                 ),
               ),
@@ -49,6 +56,15 @@ void main() {
         await tester.tap(find.text('Listen'));
         await tester.tap(find.byTooltip('Gemini settings'));
         expect([pro, listen, settings], [1, 1, 1]);
+        if (width == 360 && scale == 1) {
+          final boundary =
+              capture.currentContext!.findRenderObject()
+                  as RenderRepaintBoundary;
+          final image = await boundary.toImage(pixelRatio: 1);
+          final png = await image.toByteData(format: ui.ImageByteFormat.png);
+          print('HEADER_PNG:${base64Encode(png!.buffer.asUint8List())}');
+          image.dispose();
+        }
       });
     }
   }

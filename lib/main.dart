@@ -995,6 +995,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
 
   Future<void> importBoard() async {
     if (!await requireBoardFiles()) return;
+    if (!mounted) return;
     final ctl = TextEditingController();
     final raw = await showDialog<String>(
       context: context,
@@ -1019,7 +1020,8 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
         ],
       ),
     );
-    if (raw == null || raw.trim().isEmpty) return;
+    ctl.dispose();
+    if (!mounted || raw == null || raw.trim().isEmpty) return;
     await _loadBoard(raw);
   }
 
@@ -1030,6 +1032,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
         boardEdited &&
         !await confirm('Replace your current board with the imported one?'))
       return;
+    if (!mounted) return;
     board.replace(r.board);
     setState(() {
       if (r.title.isNotEmpty) title.text = r.title;
@@ -1116,9 +1119,9 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                   await GeminiClient(parse()).summarize(
                     'Voino test. This sentence checks that the key works.',
                   );
-                  setD(() => result = 'Key works.');
+                  if (d.mounted) setD(() => result = 'Key works.');
                 } catch (e) {
-                  setD(() => result = 'Test failed: $e');
+                  if (d.mounted) setD(() => result = 'Test failed: $e');
                 }
               },
               child: const Text('Test'),
@@ -1152,6 +1155,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
         ),
       ),
     );
+    keys.dispose();
   }
 
   Widget _boardSection() => BoardPanel(

@@ -91,8 +91,30 @@ void main() {
     expect(c.cards.length, 2);
   });
 
+  testWidgets('zoom controls change scale and keep canvas editable', (t) async {
+    await pump(t);
+    final viewer = t.widget<InteractiveViewer>(find.byType(InteractiveViewer));
+    final before = viewer.transformationController!.value.getMaxScaleOnAxis();
+    await t.tap(find.byTooltip('Zoom in'));
+    await t.pumpAndSettle();
+    expect(
+      viewer.transformationController!.value.getMaxScaleOnAxis(),
+      greaterThan(before),
+    );
+    await t.tap(find.byTooltip('Zoom out'));
+    await t.pumpAndSettle();
+    expect(
+      viewer.transformationController!.value.getMaxScaleOnAxis(),
+      closeTo(before, .001),
+    );
+  });
+
   testWidgets('320px and scaled text toolbar does not overflow', (t) async {
     await pump(t, width: 320);
+    expect(t.takeException(), isNull);
+    await t.tap(find.text('+ Note'));
+    await t.pumpAndSettle();
+    expect(find.text('Delete'), findsOneWidget);
     expect(t.takeException(), isNull);
   });
 }

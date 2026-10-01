@@ -125,7 +125,7 @@ class _BoardPanelState extends State<BoardPanel> {
           ),
           textStyle: const TextStyle(
             fontFamily: hand,
-            fontSize: 19,
+            fontSize: _mobile ? 17 : 19,
             fontWeight: FontWeight.w700,
           ),
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
@@ -291,14 +291,16 @@ class _BoardPanelState extends State<BoardPanel> {
           ),
         ],
       ),
-      Row(
+      Wrap(
+        alignment: WrapAlignment.end,
+        spacing: 6,
         children: [
           if (c.selected != null) ...[
             _pill('Edit', _editSelected),
-            const SizedBox(width: 6),
+
             _pill('Delete', c.deleteSelected),
           ],
-          const Spacer(),
+
           IconButton(
             tooltip: 'Zoom out',
             onPressed: () => _zoom(1 / 1.35),

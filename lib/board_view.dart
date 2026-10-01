@@ -113,25 +113,26 @@ class _BoardPanelState extends State<BoardPanel> {
           : 'Now tap the card the arrow should point to.',
   };
 
-  Widget _pill(String label, VoidCallback? f, {bool on = false}) =>
-      OutlinedButton(
-        onPressed: f,
-        style: OutlinedButton.styleFrom(
-          foregroundColor: _ink,
-          backgroundColor: on ? _gold.withValues(alpha: .28) : Colors.white,
-          side: const BorderSide(color: _ink, width: 1.4),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-          ),
-          textStyle: const TextStyle(
-            fontFamily: hand,
-            fontSize: _mobile ? 17 : 19,
-            fontWeight: FontWeight.w700,
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-        ),
-        child: Text(label),
-      );
+  Widget _pill(
+    String label,
+    VoidCallback? f, {
+    bool on = false,
+  }) => OutlinedButton(
+    onPressed: f,
+    style: OutlinedButton.styleFrom(
+      foregroundColor: _ink,
+      backgroundColor: on ? _gold.withValues(alpha: .28) : Colors.white,
+      side: const BorderSide(color: _ink, width: 1.4),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      textStyle: TextStyle(
+        fontFamily: hand,
+        fontSize: _mobile ? 17 : 19,
+        fontWeight: FontWeight.w700,
+      ),
+      padding: EdgeInsets.symmetric(horizontal: _mobile ? 6 : 14, vertical: 6),
+    ),
+    child: Text(label),
+  );
 
   @override
   Widget build(BuildContext context) {

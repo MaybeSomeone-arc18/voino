@@ -256,7 +256,15 @@ class _BoardPanelState extends State<BoardPanel> {
     final oldScale = _scale;
     final next = (oldScale * factor).clamp(.2, 3.0);
     final center = _viewport.center(Offset.zero);
-    final scene = _tc.toScene(center);
+    final selected = c.selected;
+    final scene = selected is CardModel
+        ? Offset(
+            selected.x + cardSize.width / 2,
+            selected.y + cardSize.height / 2,
+          )
+        : selected is ShapeModel
+        ? selected.rect.center
+        : c.bounds.center;
     _tc.value = Matrix4.diagonal3Values(next, next, 1)
       ..setTranslationRaw(
         center.dx - scene.dx * next,

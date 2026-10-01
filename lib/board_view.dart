@@ -102,7 +102,9 @@ class _BoardPanelState extends State<BoardPanel> {
 
   String _hint() => switch (c.tool) {
     Tool.select =>
-      'Drag cards and shapes to move them. Double-tap to edit. Drag empty space to pan, pinch or scroll to zoom.',
+      _mobile
+          ? 'Tap to select. Double-tap to edit. Move pans; pinch to zoom.'
+          : 'Drag cards and shapes to move them. Double-tap to edit. Drag empty space to pan, pinch or scroll to zoom.',
     Tool.box => 'Drag on empty space to draw a box.',
     Tool.circle => 'Drag on empty space to draw a circle.',
     Tool.arrow =>
@@ -248,6 +250,20 @@ class _BoardPanelState extends State<BoardPanel> {
     c.addCard(at - Offset(cardSize.width / 2, cardSize.height / 2));
   }
 
+  void _zoom(double factor) {
+    if (_viewport.isEmpty) return;
+    final oldScale = _scale;
+    final next = (oldScale * factor).clamp(.2, 3.0);
+    final center = _viewport.center(Offset.zero);
+    final scene = _tc.toScene(center);
+    _tc.value = Matrix4.diagonal3Values(next, next, 1)
+      ..setTranslationRaw(
+        center.dx - scene.dx * next,
+        center.dy - scene.dy * next,
+        0,
+      );
+  }
+
   Widget _mobileTools() => Column(
     children: [
       Row(
@@ -275,22 +291,31 @@ class _BoardPanelState extends State<BoardPanel> {
           ),
         ],
       ),
-      if (c.selected != null || c.canUndo)
-        Row(
-          children: [
-            if (c.selected != null) ...[
-              _pill('Edit', _editSelected),
-              const SizedBox(width: 6),
-              _pill('Delete', c.deleteSelected),
-            ],
-            const Spacer(),
-            IconButton(
-              tooltip: 'Undo',
-              onPressed: c.canUndo ? c.undo : null,
-              icon: const Icon(Icons.undo),
-            ),
+      Row(
+        children: [
+          if (c.selected != null) ...[
+            _pill('Edit', _editSelected),
+            const SizedBox(width: 6),
+            _pill('Delete', c.deleteSelected),
           ],
-        ),
+          const Spacer(),
+          IconButton(
+            tooltip: 'Zoom out',
+            onPressed: () => _zoom(1 / 1.35),
+            icon: const Icon(Icons.remove),
+          ),
+          IconButton(
+            tooltip: 'Zoom in',
+            onPressed: () => _zoom(1.35),
+            icon: const Icon(Icons.add),
+          ),
+          IconButton(
+            tooltip: 'Undo',
+            onPressed: c.canUndo ? c.undo : null,
+            icon: const Icon(Icons.undo),
+          ),
+        ],
+      ),
     ],
   );
 

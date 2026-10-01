@@ -4,7 +4,7 @@
 
 Built with Flutter for **Android** and the **web**. Local-first: notes work with no account, no server and no API key. AI summaries are optional.
 
-> **Status: prototype.** Unit and widget tests pass (41 Flutter, 12 Node). The web build is verified in a browser. Live speech on a real phone, the Android build and the Vercel deployment have not been verified end to end yet. See [Known limitations](#known-limitations).
+> **Status: prototype.** Latest completed review baseline passed 60 Flutter tests and 12 Node tests; CI built a release web preview and Android debug Test Store APK. New mobile board/settings fixes are under review tests. Physical Android speech, storage and purchase acceptance are still pending. Main/site may lag the review branch. Production signing and live billing are not complete. See [Known limitations](#known-limitations).
 
 ## How it works
 
@@ -192,3 +192,10 @@ acceptance until close/reopen has been tested on the device.
 Notes now uses the original paper/ink/gold palette with plain reading rows,
 section dividers, a collapsible transcript and fixed Copy notes/Make board
 actions. The decorative background stays on Listen and Board, not Notes.
+
+
+### Mobile board review and QA
+
+Phones use Select, Move, + Note and More instead of ten wrapping controls. Move pans without editing cards; selected elements show Edit/Delete. Zoom buttons and Undo remain available. More contains circles, boxes, connections, fit and board files. Warm colors remain. This is Voino's own board, not Excalidraw file compatibility or collaboration.
+
+Settings storage failure now reports that changes apply only to the current session instead of swallowing the failure. A failed write can be partial; re-save when storage is available. No account sync is claimed: Firebase project access/rules and two-user isolation must be verified before linking cloud data.

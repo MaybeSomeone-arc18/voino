@@ -163,3 +163,16 @@ Store setup. A production billing configuration and release/signing review are
 separate work. Test Store acceptance for Shipaton has not been confirmed by the
 organizer. Real-device purchase and save/open acceptance must be recorded before
 claiming those paths work.
+
+### Foreground listening sessions
+
+Device speech keeps the user's listening intent across normal silence/session
+ends and attempts to restart after a short visible "Reconnecting microphone"
+gap. Android's native recognizer still has OS-imposed timeouts and can beep on
+restart; this is not gapless recording. Stop cancels queued restarts. Network,
+permission and other non-silence errors stop the session with a visible message.
+Backgrounding the app pauses capture and requires a tap to resume. Web Whisper
+uses its existing local chunk loop; it is not available in the Android APK.
+
+Notes shows only nonempty sections. Expand Transcript to edit/listen; use the
+Board files overflow menu for JSON copy/save/open/paste with the same Pro checks.

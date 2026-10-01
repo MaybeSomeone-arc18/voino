@@ -186,3 +186,9 @@ background. A saved/error status is shown in Notes. Clearing all also clears
 the recovery draft. Clearing app data, uninstalling, private browsing or storage
 errors can still lose it: copy/export important work. Do not claim phone recovery
 acceptance until close/reopen has been tested on the device.
+
+### Notes reading layout
+
+Notes now uses the original paper/ink/gold palette with plain reading rows,
+section dividers, a collapsible transcript and fixed Copy notes/Make board
+actions. The decorative background stays on Listen and Board, not Notes.

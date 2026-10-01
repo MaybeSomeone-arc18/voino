@@ -176,3 +176,13 @@ uses its existing local chunk loop; it is not available in the Android APK.
 
 Notes shows only nonempty sections. Expand Transcript to edit/listen; use the
 Board files overflow menu for JSON copy/save/open/paste with the same Pro checks.
+
+### Local recovery draft
+
+Voino keeps one device-local recovery draft of your title, transcript, extracted
+notes and edited board. This is free, separate from Pro board-file export, and
+not history or cloud sync. Saves run after a short pause in edits and on app
+background. A saved/error status is shown in Notes. Clearing all also clears
+the recovery draft. Clearing app data, uninstalling, private browsing or storage
+errors can still lose it: copy/export important work. Do not claim phone recovery
+acceptance until close/reopen has been tested on the device.

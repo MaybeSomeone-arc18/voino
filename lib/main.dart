@@ -641,53 +641,19 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
               children: [
                 Padding(
                   padding: const EdgeInsets.fromLTRB(24, 8, 8, 0),
-                  child: Row(
-                    children: [
-                      SvgPicture.asset(
-                        'assets/logo/voino-logo.svg',
-                        height: 26,
-                        semanticsLabel: 'Voino logo',
-                      ),
-                      const SizedBox(width: 10),
-                      const Text(
-                        'voino',
-                        style: TextStyle(
-                          fontSize: 18,
-                          letterSpacing: 4,
-                          fontWeight: FontWeight.w300,
-                          color: ink,
-                        ),
-                      ),
-                      const Spacer(),
-                      if (pro.android)
-                        TextButton(
-                          onPressed: pro.busy ? null : openPro,
-                          child: Text(
-                            pro.active ? 'Test Pro active' : 'Test Pro',
-                            style: const TextStyle(color: ink),
-                          ),
-                        ),
-                      if (view != 'listen')
-                        TextButton(
-                          onPressed: () => setState(() => view = 'listen'),
-                          child: const Text(
-                            'Listen',
-                            style: TextStyle(color: ink),
-                          ),
-                        ),
-                      IconButton(
-                        tooltip: 'Gemini settings',
-                        icon: Icon(
-                          (settings.useAi && settings.keys.isNotEmpty) ||
-                                  settings.useProxy
-                              ? Icons.auto_awesome
-                              : Icons.tune,
-                          color: ink,
-                          size: 20,
-                        ),
-                        onPressed: openSettings,
-                      ),
-                    ],
+                  child: VoinoHeader(
+                    android: pro.android,
+                    active: pro.active,
+                    busy: pro.busy,
+                    showListen: view != 'listen',
+                    onPro: openPro,
+                    onListen: () => setState(() => view = 'listen'),
+                    onSettings: openSettings,
+                    settingsIcon:
+                        (settings.useAi && settings.keys.isNotEmpty) ||
+                            settings.useProxy
+                        ? Icons.auto_awesome
+                        : Icons.tune,
                   ),
                 ),
                 Expanded(
@@ -1162,5 +1128,76 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     controller: board,
     onSave: downloadBoard,
     onOpen: openBoardFile,
+  );
+}
+
+/// Header actions wrap rather than push the settings button off a narrow phone.
+class VoinoHeader extends StatelessWidget {
+  const VoinoHeader({
+    super.key,
+    required this.android,
+    required this.active,
+    required this.busy,
+    required this.showListen,
+    required this.onPro,
+    required this.onListen,
+    required this.onSettings,
+    required this.settingsIcon,
+  });
+  final bool android, active, busy, showListen;
+  final VoidCallback onPro, onListen, onSettings;
+  final IconData settingsIcon;
+  @override
+  Widget build(BuildContext context) => Wrap(
+    alignment: WrapAlignment.spaceBetween,
+    crossAxisAlignment: WrapCrossAlignment.center,
+    spacing: 8,
+    runSpacing: 0,
+    children: [
+      Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SvgPicture.asset(
+            'assets/logo/voino-logo.svg',
+            height: 26,
+            semanticsLabel: 'Voino logo',
+          ),
+          const SizedBox(width: 10),
+          const Text(
+            'voino',
+            style: TextStyle(
+              fontSize: 18,
+              letterSpacing: 4,
+              fontWeight: FontWeight.w300,
+              color: ink,
+            ),
+          ),
+        ],
+      ),
+      Wrap(
+        alignment: WrapAlignment.end,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          if (android)
+            TextButton(
+              onPressed: busy ? null : onPro,
+              child: Text(
+                active ? 'Test Pro active' : 'Test Pro',
+                style: const TextStyle(color: ink),
+              ),
+            ),
+          if (showListen)
+            TextButton(
+              onPressed: onListen,
+              child: const Text('Listen', style: TextStyle(color: ink)),
+            ),
+          IconButton(
+            tooltip: 'Gemini settings',
+            onPressed: onSettings,
+            icon: Icon(settingsIcon, color: ink, size: 20),
+          ),
+        ],
+      ),
+    ],
   );
 }

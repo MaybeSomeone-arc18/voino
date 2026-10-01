@@ -57,6 +57,7 @@ void main() {
         await tester.tap(find.byTooltip('Gemini settings'));
         expect([pro, listen, settings], [1, 1, 1]);
         if (width == 360 && scale == 1) {
+          await tester.pumpAndSettle();
           final boundary =
               capture.currentContext!.findRenderObject()
                   as RenderRepaintBoundary;

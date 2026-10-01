@@ -13,6 +13,8 @@ import 'gemini.dart';
 import 'settings.dart';
 import 'whisper_stub.dart' if (dart.library.js_interop) 'whisper_web.dart';
 import 'logic.dart';
+import 'minimal_notes.dart';
+import 'listening_session.dart';
 import 'pro_access.dart';
 import 'revenuecat_backend.dart';
 import 'live_transcript.dart';
@@ -43,6 +45,7 @@ class Home extends StatefulWidget {
 
 class _HomeState extends State<Home> with WidgetsBindingObserver {
   late final ProAccess pro;
+  late final ListeningSession deviceSession;
   final title = TextEditingController(), transcript = TextEditingController();
   final speech = SpeechToText();
   bool speechReady = false, listening = false, busy = false;
@@ -68,18 +71,45 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     );
     pro.addListener(_proChanged);
     pro.init();
+    deviceSession = ListeningSession(
+      startEngine: (onWords) async {
+        before = transcript.text.trim();
+        await speech.listen(
+          onResult: (r) => onWords(r.recognizedWords),
+          listenOptions: SpeechListenOptions(partialResults: true,
+            cancelOnError: true, listenMode: ListenMode.dictation),
+        );
+      },
+      stopEngine: () async { await speech.stop(); },
+      onWords: (words, newSession) {
+        if (mounted && words.trim().isNotEmpty) {
+          setState(() => transcript.text = stitchSpeech(before, words));
+        }
+      },
+    );
+    deviceSession.addListener(_deviceChanged);
     Settings.load().then((v) => setState(() => settings = v));
     speech
         .initialize(
-          onStatus: (s) {
-            if ((s == 'done' || s == 'notListening') && listening) setState(() => listening = false);
+          onStatus: deviceSession.status,
+          onError: (e) {
+            deviceSession.error(e.errorMsg);
+            if (!deviceSession.requested && mounted) _msg(deviceSession.message);
           },
-          onError: (e) => _msg('Speech error: ${e.errorMsg}. You can type or paste instead.'),
         )
         .then((ok) => setState(() {
               speechReady = ok;
               if (!ok && WhisperEngine.supported) engine = 'whisper'; // no device recognizer: use Whisper
             }));
+  }
+
+  void _deviceChanged() {
+    if (mounted && engine == 'device') {
+      setState(() {
+        listening = deviceSession.requested;
+        micNote = deviceSession.message;
+      });
+    }
   }
 
   void _proChanged() {
@@ -89,11 +119,22 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) pro.refresh();
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.detached) {
+      if (engine == 'device') {
+        deviceSession.stop(note: 'Paused in background. Tap to resume.');
+      } else if (listening) {
+        WhisperEngine.stop();
+        if (mounted) setState(() { listening = false; micNote = 'Paused in background. Tap to resume.'; });
+      }
+    }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    deviceSession.removeListener(_deviceChanged);
+    deviceSession.dispose();
+    speech.cancel();
     pro.removeListener(_proChanged);
     pro.dispose();
     title.dispose();
@@ -195,18 +236,12 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
 
   Future<void> toggleListen() async {
     if (engine == 'whisper') return toggleWhisper();
-    if (listening) {
-      await speech.stop();
-      setState(() => listening = false);
-      generate(manual: false);
-      return;
+    if (deviceSession.requested) {
+      await deviceSession.stop();
+      if (mounted) generate(manual: false);
+    } else {
+      await deviceSession.start();
     }
-    before = transcript.text.trim().isEmpty ? '' : '${transcript.text.trim()} ';
-    setState(() => listening = true);
-    await speech.listen(
-      onResult: (r) => setState(() => transcript.text = stitchSpeech(before, r.recognizedWords)),
-      listenOptions: SpeechListenOptions(partialResults: true, listenMode: ListenMode.dictation),
-    );
   }
 
   Future<bool> confirm(String q) async =>
@@ -286,7 +321,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
       if (engine == 'whisper') {
         await WhisperEngine.stop();
       } else {
-        await speech.cancel();
+        await deviceSession.stop();
       }
     }
     board.clear();
@@ -330,7 +365,6 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    final wide = MediaQuery.of(context).size.width > 800;
     final capture = _panel('01 / CAPTURE', 'Listen to the discussion', [
       TextField(
           controller: title,
@@ -380,21 +414,19 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
           "Speech recognition may use the device or browser vendor's online service. Ask permission before recording other people.",
           style: TextStyle(fontSize: 11)),
     ]);
-    final notes = _panel('02 / KEEP', 'Notes you can revise', [
-      if (noteSource.isNotEmpty) Chip(label: Text(noteSource, style: const TextStyle(fontSize: 11))),
-      Text(exportText(currentNote())),
-      const SizedBox(height: 12),
-      Wrap(spacing: 8, children: [
-        OutlinedButton(onPressed: () => copy(exportText(currentNote()), 'Notes'), child: const Text('Copy notes')),
-        OutlinedButton(onPressed: copyBoardJson, child: const Text('Copy board JSON')),
-        OutlinedButton(onPressed: downloadBoard, child: const Text('Download board JSON')),
-        OutlinedButton(onPressed: openBoardFile, child: const Text('Open board file')),
-        OutlinedButton(onPressed: importBoard, child: const Text('Paste board JSON')),
-      ]),
-      const SizedBox(height: 8),
-      const Text('Check notes against the transcript. Rule-based notes are extracts, not a summary. Guest session: nothing is saved.',
-          style: TextStyle(fontSize: 11)),
-    ]);
+    final notes = MinimalNotes(
+      note: currentNote(), source: noteSource, capture: capture, busy: busy,
+      onCopy: () => copy(exportText(currentNote()), 'Notes'),
+      onBoard: generate,
+      onFile: (action) {
+        switch (action) {
+          case 'copy': copyBoardJson();
+          case 'save': downloadBoard();
+          case 'open': openBoardFile();
+          case 'paste': importBoard();
+        }
+      },
+    );
     return Scaffold(
       backgroundColor: paper,
       body: Stack(children: [
@@ -433,13 +465,9 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                         const SizedBox(height: 16),
                         if (view == 'board')
                           _boardSection()
-                        else if (wide)
-                          Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                            Expanded(child: capture),
-                            const SizedBox(width: 16),
-                            Expanded(child: notes),
-                          ])
-                        else ...[notes, const SizedBox(height: 16), capture],
+                        else
+                          Align(alignment: Alignment.topCenter,
+                            child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 720), child: notes)),
                       ])),
             ),
           ),
@@ -501,10 +529,10 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
               height: listening ? 88 : 76,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: listening ? gold : ink,
+                color: listening && (engine == 'whisper' || deviceSession.active) ? gold : ink,
                 boxShadow: [BoxShadow(color: (listening ? gold : ink).withValues(alpha: 0.3), blurRadius: listening ? 32 : 16)],
               ),
-              child: Icon(listening ? Icons.pause : Icons.mic_none, color: paper, size: 34),
+              child: Icon(listening ? Icons.stop : Icons.mic_none, color: paper, size: 34),
             ),
           ),
           const SizedBox(height: 10),
@@ -514,7 +542,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                   : busy
                       ? 'Making sense of it...'
                       : listening
-                          ? 'Listening · tap to pause'
+                          ? 'Listening · tap to stop'
                           : !canListen
                               ? 'Speech unavailable · type instead'
                               : transcript.text.isEmpty

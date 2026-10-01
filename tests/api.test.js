@@ -166,3 +166,19 @@ test('handler: rate limit returns 429 with Retry-After, errors never leak keys',
   assert.equal(res.code, 503);
   assert.ok(!JSON.stringify(res.body).includes('secret-1'));
 });
+
+test('duplicate or invalid points preserve original model indexes', () => {
+ const r=core.validate(modelJson({points:['same fact',null,'same fact','new fact'],topics:[{name:'facts',relatedPoints:[2,3]}],links:[{from:2,to:3,label:'relates'}],keyPoint:3}),TRANSCRIPT);
+ assert.deepEqual(r.points,['same fact','new fact']);
+ assert.deepEqual(r.topics,[{name:'facts',relatedPoints:[0,1]}]);
+ assert.deepEqual(r.links,[{from:0,to:1,label:'relates'}]);
+ assert.equal(r.keyPoint,1);
+});
+test('handler rejects non-string and oversized raw payload without trusting content-length', async () => {
+ let calls=0;
+ const handler=core.makeHandler({env:{GEMINI_KEYS:'x'},fetchImpl:async()=>{calls++;return okResponse()},limiter:()=>({ok:true})});
+ for(const transcript of [123,{},[],true]){
+  const res=fakeRes();await handler({method:'POST',headers:{},body:{transcript}},res);assert.equal(res.code,400);
+ }
+ const res=fakeRes();await handler({method:'POST',headers:{},body:JSON.stringify({transcript:'hi',unused:'x'.repeat(70000)})},res);assert.equal(res.code,413);assert.equal(calls,0);
+});

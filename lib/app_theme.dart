@@ -9,7 +9,7 @@ class AppColors {
   static const paper = Color(0xFFF4EEE1);
   static const ink = Color(0xFF2B2A28);
   static const gold = Color(0xFFC4903F);
-  static final muted = ink.withValues(alpha: 0.68); // about 5:1 on paper
+  static const muted = Color(0xAD2B2A28); // ink at 68%, about 5:1 on paper
 }
 
 ThemeData buildAppTheme() {

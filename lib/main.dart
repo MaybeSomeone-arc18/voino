@@ -55,7 +55,8 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
   final speech = SpeechToText();
   bool speechReady = false, listening = false, busy = false;
   Settings settings = Settings();
-  String engine = 'device'; // device | whisper | gemini (web only)
+  // device | whisper | gemini. Gemini (through the Voino server, free tier) is the default on web.
+  String engine = (kIsWeb && WhisperEngine.supported) ? 'gemini' : 'device';
   bool get _webAsr => engine == 'whisper' || engine == 'gemini';
   int engineSwitches = 0; // bumps the mic animation on each switch
   bool _fellBackToLocal = false;
@@ -123,7 +124,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
           if (mounted)
             setState(() {
               speechReady = ok;
-              if (!ok && WhisperEngine.supported)
+              if (!ok && WhisperEngine.supported && engine == 'device')
                 engine = 'whisper'; // no device recognizer: use Whisper
             });
         });

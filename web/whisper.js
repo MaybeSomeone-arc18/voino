@@ -12,6 +12,7 @@ const TRANSFORMERS = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8
 const VARIANTS = {
   multi: { label: 'Stock tiny (MIT)', model: 'Xenova/whisper-tiny', lang: 'hi' },
   hinglish: { label: 'Hinglish tiny (test only)', model: 'hinglish', local: true, lang: null },
+  gemini: { label: 'Gemini (cloud, free tier)', cloud: true, lang: null },
   vaani: { label: 'Vaani Hindi tiny (Apache-2.0)', model: 'vaani', local: true, lang: 'hi' },
 };
 let variant = (() => { try { const v = localStorage.getItem('voinoAsr'); return VARIANTS[v] ? v : 'multi'; } catch (_) { return 'multi'; } })();
@@ -44,7 +45,7 @@ const availability = {};
 function isInstalled(name) {
   const v = VARIANTS[name];
   if (!v) return Promise.resolve(false);
-  if (!v.local) return Promise.resolve(true);
+  if (!v.local) return Promise.resolve(true); // remote model or cloud route
   availability[name] ??= (async () => {
     try {
       const base = new URL('models/', globalThis.document?.baseURI || location.href).href;
@@ -80,15 +81,17 @@ function hinglishCache(base) {
   };
 }
 
-async function loadModel(onProgress) {
-  if (!(await isInstalled(variant))) {
-    const missing = VARIANTS[variant].label;
-    setVariant('multi');
+async function loadModel(onProgress, name = variant) {
+  if (VARIANTS[name].cloud) return null; // nothing to download; the local engine loads only if the cloud is unavailable
+  if (!(await isInstalled(name))) {
+    const missing = VARIANTS[name].label;
+    if (name === variant) setVariant('multi');
+    name = 'multi';
     setNotice(`${missing} is not installed in this build; using ${VARIANTS.multi.label}.`);
   }
-  const v = VARIANTS[variant];
-  if (!asrPromises[variant]) {
-    asrPromises[variant] = (async () => {
+  const v = VARIANTS[name];
+  if (!asrPromises[name]) {
+    asrPromises[name] = (async () => {
       const { pipeline, env, Tensor } = await import(TRANSFORMERS);
       TensorCls = Tensor;
       env.useBrowserCache = true;
@@ -113,11 +116,11 @@ async function loadModel(onProgress) {
         },
       });
     })().catch((e) => {
-      delete asrPromises[variant]; // allow retry
+      delete asrPromises[name]; // allow retry
       throw e;
     });
   }
-  return asrPromises[variant];
+  return asrPromises[name];
 }
 
 function joined(frames) {
@@ -143,14 +146,71 @@ const log = (window.voinoLog = []);
 const capture = (window.voinoCapture = { samples: 0, t0: 0 }); // audio actually received vs wall clock (detects dropped audio)
 let onLog = null;
 
+// ---- Gemini through our own /api/transcribe route (the key stays on the server) ----
+let cloudBlockedUntil = 0; // after a quota or network failure, stay on-device until this time
+const CLOUD_RETRY_MS = 60000;
+let curCb = null;
+
+function wavBase64(samples) {
+  const n = samples.length;
+  const buf = new ArrayBuffer(44 + n * 2);
+  const dv = new DataView(buf);
+  const w = (o, t) => { for (let i = 0; i < t.length; i++) dv.setUint8(o + i, t.charCodeAt(i)); };
+  w(0, 'RIFF'); dv.setUint32(4, 36 + n * 2, true); w(8, 'WAVE'); w(12, 'fmt ');
+  dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+  dv.setUint32(24, RATE, true); dv.setUint32(28, RATE * 2, true); dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
+  w(36, 'data'); dv.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) dv.setInt16(44 + i * 2, Math.max(-1, Math.min(1, samples[i])) * 32767, true);
+  const u8 = new Uint8Array(buf);
+  let bin = '';
+  for (let i = 0; i < u8.length; i += 8192) bin += String.fromCharCode.apply(null, u8.subarray(i, i + 8192));
+  return btoa(bin);
+}
+
+async function geminiText(samples) {
+  const url = new URL('api/transcribe', globalThis.document?.baseURI || location.href).href;
+  const r = await fetch(url, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ audio: wavBase64(samples), vocab }),
+  });
+  if (!r.ok) {
+    let code = '';
+    try { code = (await r.json()).error || ''; } catch (_) {}
+    const e = new Error(code || 'http_' + r.status);
+    e.status = r.status;
+    throw e;
+  }
+  return ((await r.json()).text || '').trim();
+}
+
 async function decode(asr, samples, isFinal) {
   const v = VARIANTS[variant];
   const t0 = performance.now();
-  const lang = v.lang;
+  let engine = variant;
+  let raw = null;
+  if (v.cloud) {
+    if (!isFinal) return ''; // no partial calls to the cloud: they would burn the free quota
+    if (Date.now() >= cloudBlockedUntil) {
+      try { raw = await geminiText(samples); }
+      catch (e) {
+        cloudBlockedUntil = Date.now() + CLOUD_RETRY_MS;
+        const quota = e.status === 429;
+        const msg = quota ? 'Gemini limit reached, switched to on-device. Will retry in a minute.'
+          : 'Gemini is unavailable (' + (e.message || 'error') + '), switched to on-device. Will retry in a minute.';
+        setNotice(msg);
+        curCb?.onError?.(msg);
+      }
+    }
+    if (raw === null) { // on-device fallback for this segment
+      engine = 'multi';
+      asr = await loadModel(() => {}, 'multi');
+    }
+  }
+  const vv = VARIANTS[engine];
+  const lang = vv.lang;
   const opts = { task: 'transcribe', max_new_tokens: Math.ceil((samples.length / RATE) * 9) + 12 };
   if (lang) opts.language = lang;
-  const out = await asr(samples, opts);
-  const raw = (out?.text || '').trim();
+  if (raw === null) raw = ((await asr(samples, opts))?.text || '').trim();
   let text = window.voinoRomanize ? window.voinoRomanize(raw) : raw;
   const AT = window.voinoAsrText;
   if (AT) { text = AT.collapseRepeats(text); text = AT.applyVocabulary(text, vocab); }
@@ -159,7 +219,7 @@ async function decode(asr, samples, isFinal) {
   for (let i = 0; i < samples.length; i++) rms += samples[i] * samples[i];
   rms = Math.sqrt(rms / samples.length);
   const entry = {
-    t: new Date().toLocaleTimeString(), engine: variant, lang: lang || 'auto', final: isFinal,
+    t: new Date().toLocaleTimeString(), engine, lang: lang || 'auto', final: isFinal,
     seconds: +(samples.length / RATE).toFixed(1), ms: Math.round(performance.now() - t0),
     rms: +rms.toFixed(4), raw, shown: halluc ? '' : text, dropped: halluc,
   };
@@ -285,6 +345,7 @@ async function start(onText, onProgress, onError, onPartial, onStats) {
   }
   window.voinoCapture.worklet = worklet;
   const cb = { onText, onError, onPartial, onStats };
+  curCb = cb;
   running = true; capture.samples = 0; capture.t0 = performance.now();
   timer = setInterval(() => tick(asr, cb), STEP_MS);
   window.__voinoCb = { asr, cb };
@@ -351,4 +412,12 @@ function setVocabulary(words) {
   try { localStorage.setItem('voinoVocab', JSON.stringify(vocab)); } catch (_) {}
 }
 
-window.voinoWhisper = { supported, start, stop, setVariant, setVocabulary, vocabulary: () => vocab.slice(), variants: () => Object.keys(VARIANTS) };
+// The Flutter switch's third option: use the Gemini route, or go back to the saved local engine.
+function setCloud(on) {
+  if (on) { variant = 'gemini'; return; }
+  let saved = 'multi';
+  try { saved = localStorage.getItem('voinoAsr') || 'multi'; } catch (_) {}
+  variant = VARIANTS[saved] && !VARIANTS[saved].cloud ? saved : 'multi';
+}
+
+window.voinoWhisper = { supported, start, stop, setVariant, setCloud, setVocabulary, vocabulary: () => vocab.slice(), variants: () => Object.keys(VARIANTS) };

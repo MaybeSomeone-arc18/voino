@@ -57,7 +57,8 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
   final speech = SpeechToText();
   bool speechReady = false, listening = false, busy = false;
   Settings settings = Settings();
-  String engine = 'device'; // device | whisper (web only)
+  String engine = 'device'; // device | whisper | gemini (web only)
+  bool get _webAsr => engine == 'whisper' || engine == 'gemini';
   int engineSwitches = 0; // bumps the mic animation on each switch
   bool _fellBackToLocal = false;
   String whisperPartial = ''; // live, not yet committed Whisper text
@@ -312,6 +313,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
 
   Future<void> toggleWhisper() async {
+    WhisperEngine.useCloud(engine == 'gemini');
     if (listening) {
       setState(() => micNote = 'Finishing transcription...');
       await WhisperEngine.stop();
@@ -361,7 +363,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
   }
 
   Future<void> toggleListen() async {
-    if (engine == 'whisper') return toggleWhisper();
+    if (_webAsr) return toggleWhisper();
     if (deviceSession.requested) {
       await deviceSession.stop();
       if (mounted) generate(manual: false);
@@ -471,7 +473,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     ))
       return;
     if (listening) {
-      if (engine == 'whisper') {
+      if (_webAsr) {
         await WhisperEngine.stop();
       } else {
         await deviceSession.stop();
@@ -558,7 +560,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
           children: [
             FilledButton.icon(
               onPressed:
-                  (engine == 'whisper' ? WhisperEngine.supported : speechReady)
+                  (_webAsr ? WhisperEngine.supported : speechReady)
                   ? toggleListen
                   : null,
               icon: Icon(listening ? Icons.stop : Icons.mic),
@@ -575,7 +577,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
               child: Text(
                 micNote.isNotEmpty
                     ? micNote
-                    : (engine == 'whisper' || speechReady)
+                    : (_webAsr || speechReady)
                     ? (listening
                           ? 'Listening for words...'
                           : 'Speech available')
@@ -809,7 +811,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
   );
 
   Widget _listenView() {
-    final canListen = engine == 'whisper'
+    final canListen = _webAsr
         ? WhisperEngine.supported
         : speechReady;
     return Column(
@@ -894,7 +896,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                     shape: BoxShape.circle,
                     color:
                         listening &&
-                            (engine == 'whisper' || deviceSession.active)
+                            (_webAsr || deviceSession.active)
                         ? gold
                         : ink,
                     boxShadow: [

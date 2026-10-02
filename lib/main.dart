@@ -721,13 +721,6 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     );
   }
 
-  static final link = TextButton.styleFrom(
-    foregroundColor: Colors.black54,
-    textStyle: const TextStyle(fontSize: 12),
-    minimumSize: const Size(52, 36),
-    padding: const EdgeInsets.symmetric(horizontal: 8),
-  );
-
   Widget _notesActions() => Container(
     decoration: const BoxDecoration(
       color: paper,
@@ -740,21 +733,6 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                TextButton(
-                  style: link,
-                  onPressed: clearAll,
-                  child: const Text('Clear'),
-                ),
-                TextButton(
-                  style: link,
-                  onPressed: () => setState(() => view = 'board'),
-                  child: const Text('Go to board'),
-                ),
-              ],
-            ),
             Row(
               children: [
                 Expanded(
@@ -783,6 +761,38 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                     ),
                     onPressed: busy ? null : generate,
                     child: Text(busy ? 'Working...' : 'Make board'),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: ink,
+                      minimumSize: const Size(0, 47),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(7),
+                      ),
+                    ),
+                    onPressed: clearAll,
+                    child: const Text('Clear'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: OutlinedButton(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: ink,
+                      minimumSize: const Size(0, 47),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(7),
+                      ),
+                    ),
+                    onPressed: () => setState(() => view = 'board'),
+                    child: const Text('Go to board'),
                   ),
                 ),
               ],

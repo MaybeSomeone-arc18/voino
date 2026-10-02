@@ -721,6 +721,13 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     );
   }
 
+  static final link = TextButton.styleFrom(
+    foregroundColor: Colors.black54,
+    textStyle: const TextStyle(fontSize: 12),
+    minimumSize: const Size(52, 36),
+    padding: const EdgeInsets.symmetric(horizontal: 8),
+  );
+
   Widget _notesActions() => Container(
     decoration: const BoxDecoration(
       color: paper,
@@ -765,8 +772,16 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                 ),
               ],
             ),
-            const SizedBox(height: 10),
-            Text(
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                TextButton(
+                  style: link,
+                  onPressed: clearAll,
+                  child: const Text('Clear'),
+                ),
+                Expanded(
+                  child: Text(
               draft.error.isNotEmpty
                   ? draft.error
                   : !draft.ready
@@ -778,6 +793,14 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                   : 'One draft saves here · No cloud backup',
               textAlign: TextAlign.center,
               style: const TextStyle(fontSize: 11, color: Colors.black54),
+            ),
+                ),
+                TextButton(
+                  style: link,
+                  onPressed: board.isEmpty ? null : () => setState(() => view = 'board'),
+                  child: const Text('Board'),
+                ),
+              ],
             ),
           ],
         ),

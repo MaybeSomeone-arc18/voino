@@ -6,7 +6,7 @@ const { createRateLimiter } = require('./core');
 const MAX_BODY_BYTES = 1.5 * 1024 * 1024; // about 40 s of 16 kHz mono 16-bit audio as base64
 const DEFAULT_MODEL = 'gemini-2.5-flash';
 // Models a request may ask for by name (for side-by-side tests); anything else uses the env/default model.
-const ALLOWED_MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.8-flash'];
+const ALLOWED_MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.8-flash', 'gemini-3.5-transcribe'];
 const ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 const PROMPT =
@@ -23,14 +23,22 @@ async function transcribe(audioB64, { key, fetchImpl = fetch, model = DEFAULT_MO
   const words = vocab.filter((w) => typeof w === 'string' && w.length < 40).slice(0, 50);
   const prompt = words.length ? `${PROMPT} Spell these names and terms exactly: ${words.join(', ')}.` : PROMPT;
   let res;
+  // The dedicated speech-to-text model takes no prompt: language hints and vocabulary go in its own config.
+  const stt = model.includes('transcribe');
+  const reqBody = stt
+    ? {
+        contents: [{ role: 'user', parts: [{ inline_data: { mime_type: mime, data: audioB64 } }] }],
+        generationConfig: { audioTranscriptionConfig: { languageCodes: [], ...(words.length ? { customVocabulary: words } : {}) } },
+      }
+    : {
+        contents: [{ role: 'user', parts: [{ text: prompt }, { inline_data: { mime_type: mime, data: audioB64 } }] }],
+        generationConfig: { temperature: 0, thinkingConfig: { thinkingBudget: 0 } },
+      };
   try {
     res = await fetchImpl(`${ENDPOINT}/${model}:generateContent`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
-      body: JSON.stringify({
-        contents: [{ role: 'user', parts: [{ text: prompt }, { inline_data: { mime_type: mime, data: audioB64 } }] }],
-        generationConfig: { temperature: 0, thinkingConfig: { thinkingBudget: 0 } },
-      }),
+      body: JSON.stringify(reqBody),
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch {
@@ -38,7 +46,11 @@ async function transcribe(audioB64, { key, fetchImpl = fetch, model = DEFAULT_MO
   }
   if (res.status === 429) throw new HttpError(429, 'quota_exhausted');
   if (res.status >= 500) throw new HttpError(503, 'upstream_unavailable');
-  if (res.status !== 200) throw new HttpError(502, 'upstream_rejected');
+  if (res.status !== 200) {
+    const e = new HttpError(502, 'upstream_rejected');
+    try { e.detail = String((await res.json())?.error?.message || '').slice(0, 200); } catch {}
+    throw e;
+  }
   try {
     const data = await res.json();
     const parts = data?.candidates?.[0]?.content?.parts || [];
@@ -79,8 +91,8 @@ function makeHandler({ env = process.env, fetchImpl = fetch, limiter = createRat
       const text = await transcribe(audio, { key, fetchImpl, model: ALLOWED_MODELS.includes(body.model) ? body.model : (env.GEMINI_ASR_MODEL || DEFAULT_MODEL), vocab: Array.isArray(body.vocab) ? body.vocab : [] });
       return res.status(200).json({ text });
     } catch (e) {
-      // Generic errors only: never echo the key or upstream bodies.
-      return res.status(e.status || 502).json({ error: e.code || 'transcribe_failed' });
+      // Short upstream error message only (never the key or full bodies).
+      return res.status(e.status || 502).json({ error: e.code || 'transcribe_failed', ...(e.detail ? { detail: e.detail } : {}) });
     }
   };
 }

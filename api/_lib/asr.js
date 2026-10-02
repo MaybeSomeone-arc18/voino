@@ -19,7 +19,7 @@ class HttpError extends Error {
   constructor(status, code) { super(code); this.status = status; this.code = code; }
 }
 
-async function transcribe(audioB64, { key, fetchImpl = fetch, model = DEFAULT_MODEL, mime = 'audio/wav', timeoutMs = 20000, vocab = [] }) {
+async function transcribe(audioB64, { key, fetchImpl = fetch, model = DEFAULT_MODEL, mime = 'audio/wav', timeoutMs = 20000, vocab = [], debug = false }) {
   const words = vocab.filter((w) => typeof w === 'string' && w.length < 40).slice(0, 50);
   const prompt = words.length ? `${PROMPT} Spell these names and terms exactly: ${words.join(', ')}.` : PROMPT;
   let res;
@@ -32,7 +32,7 @@ async function transcribe(audioB64, { key, fetchImpl = fetch, model = DEFAULT_MO
       }
     : {
         contents: [{ role: 'user', parts: [{ text: prompt }, { inline_data: { mime_type: mime, data: audioB64 } }] }],
-        generationConfig: { temperature: 0, thinkingConfig: { thinkingBudget: 0 } },
+        generationConfig: model.startsWith('gemini-2.5') ? { temperature: 0, thinkingConfig: { thinkingBudget: 0 } } : { temperature: 0 },
       };
   try {
     res = await fetchImpl(`${ENDPOINT}/${model}:generateContent`, {
@@ -53,6 +53,7 @@ async function transcribe(audioB64, { key, fetchImpl = fetch, model = DEFAULT_MO
   }
   try {
     const data = await res.json();
+    if (debug) return '\u0000RAW' + JSON.stringify(data).slice(0, 900);
     const parts = data?.candidates?.[0]?.content?.parts || [];
     return parts.map((p) => p.text || '').join('').trim();
   } catch {
@@ -88,7 +89,8 @@ function makeHandler({ env = process.env, fetchImpl = fetch, limiter = createRat
     if (typeof audio !== 'string' || !/^[A-Za-z0-9+/=]+$/.test(audio) || audio.length < 100) return res.status(400).json({ error: 'invalid_audio' });
     if (audio.length > MAX_BODY_BYTES) return res.status(413).json({ error: 'too_long' });
     try {
-      const text = await transcribe(audio, { key, fetchImpl, model: ALLOWED_MODELS.includes(body.model) ? body.model : (env.GEMINI_ASR_MODEL || DEFAULT_MODEL), vocab: Array.isArray(body.vocab) ? body.vocab : [] });
+      const text = await transcribe(audio, { key, fetchImpl, model: ALLOWED_MODELS.includes(body.model) ? body.model : (env.GEMINI_ASR_MODEL || DEFAULT_MODEL), vocab: Array.isArray(body.vocab) ? body.vocab : [], debug: body.debug === true });
+      if (text.startsWith('\u0000RAW')) return res.status(200).json({ raw: text.slice(4) });
       return res.status(200).json({ text });
     } catch (e) {
       // Short upstream error message only (never the key or full bodies).

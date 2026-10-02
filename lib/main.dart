@@ -57,6 +57,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
   bool speechReady = false, listening = false, busy = false;
   Settings settings = Settings();
   String engine = 'device'; // device | whisper (web only)
+  String whisperPartial = ''; // live, not yet committed Whisper text
   String micNote = '';
   String view = 'listen'; // listen | notes | board
   String summary = '', noteSource = '';
@@ -298,6 +299,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
       setState(() => micNote = 'Finishing transcription...');
       await WhisperEngine.stop();
       setState(() {
+        whisperPartial = '';
         listening = false;
         micNote = '';
       });
@@ -326,6 +328,9 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
             );
         },
         onError: (m) => _msg(m),
+        onPartial: (t) {
+          if (mounted) setState(() => whisperPartial = t);
+        },
       );
     } catch (e) {
       if (mounted) {
@@ -835,7 +840,9 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
             mainAxisSize: MainAxisSize.min,
             children: [
               if (listening) ...[
-                LiveTranscript(text: transcript.text),
+                LiveTranscript(
+                  text: whisperPartial.isEmpty ? transcript.text : '${transcript.text} $whisperPartial',
+                ),
                 const SizedBox(height: 18),
               ],
               GestureDetector(

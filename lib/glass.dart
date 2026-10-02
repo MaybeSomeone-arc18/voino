@@ -39,36 +39,39 @@ class _GlassButtonState extends State<GlassButton> {
         ? ink.withValues(alpha: solid ? 1 : 0.86)
         : Colors.white.withValues(alpha: solid ? 1 : 0.5);
     final fg = widget.primary ? Colors.white : ink;
+    // BoxDecoration ignores `color` when a gradient is set, so tint and highlight are two layers.
     final glass = DecoratedBox(
-      decoration: BoxDecoration(
-        borderRadius: r,
-        color: fill,
-        gradient: solid
-            ? null
-            : LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  Colors.white.withValues(alpha: widget.primary ? 0.16 : 0.45),
-                  Colors.white.withValues(alpha: 0),
-                ],
-                stops: const [0, 0.6],
-              ),
-        border: Border.all(
-          color: widget.primary ? Colors.white.withValues(alpha: 0.22) : Colors.white.withValues(alpha: 0.9),
-          width: 1,
+      decoration: BoxDecoration(borderRadius: r, color: fill),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: r,
+          gradient: solid
+              ? null
+              : LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.white.withValues(alpha: widget.primary ? 0.16 : 0.45),
+                    Colors.white.withValues(alpha: 0),
+                  ],
+                  stops: const [0, 0.6],
+                ),
+          border: Border.all(
+            color: widget.primary ? Colors.white.withValues(alpha: 0.22) : Colors.white.withValues(alpha: 0.9),
+            width: 1,
+          ),
         ),
-      ),
-      child: Center(
-        child: Text(
-          widget.label,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            fontSize: 15,
-            fontWeight: FontWeight.w600,
-            letterSpacing: 0.2,
-            color: enabled ? fg : fg.withValues(alpha: 0.4),
+        child: Center(
+          child: Text(
+            widget.label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.2,
+              color: enabled ? fg : fg.withValues(alpha: 0.4),
+            ),
           ),
         ),
       ),

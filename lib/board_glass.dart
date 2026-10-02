@@ -20,7 +20,7 @@ class BoardBar extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: const Color(0xFFFBF8F0),
         borderRadius: BorderRadius.circular(radius),
         border: Border.all(color: _ink.withValues(alpha: .16)),
         boxShadow: [

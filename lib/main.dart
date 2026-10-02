@@ -538,6 +538,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
           const SizedBox(height: 12),
           SegmentedButton<String>(
             segments: [
+              const ButtonSegment(value: 'gemini', label: Text('Gemini')),
               const ButtonSegment(
                 value: 'whisper',
                 label: Text('Whisper (local)'),

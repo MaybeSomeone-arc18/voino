@@ -1,8 +1,8 @@
-// Web-only local speech-to-text: Whisper tiny.en in the browser via transformers.js (WASM).
+// Web-only local speech-to-text: multilingual Whisper tiny in the browser (Hindi + English, language auto-detected) via transformers.js (WASM).
 // The model (about 40 MB quantized) downloads on first use and is cached by the browser.
 // Audio is recorded in 5-second standalone chunks, each transcribed separately.
 const TRANSFORMERS = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1/dist/transformers.min.js';
-const MODEL = 'Xenova/whisper-tiny.en';
+const MODEL = 'Xenova/whisper-tiny'; // multilingual; the old tiny.en model was English-only
 const CHUNK_MS = 5000;
 const MIN_SECONDS = 0.6;
 const SILENCE_RMS = 0.004;
@@ -74,7 +74,8 @@ async function transcribe(blob, asr, onText, onError) {
     let sum = 0;
     for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
     if (Math.sqrt(sum / samples.length) < SILENCE_RMS) return; // skip silence, avoids hallucinated text
-    const out = await asr(samples);
+    // language omitted so Whisper auto-detects per chunk (Hindi or English)
+    const out = await asr(samples, { task: 'transcribe' });
     const text = (out?.text || '').trim();
     if (text) onText(text);
   } catch (e) {

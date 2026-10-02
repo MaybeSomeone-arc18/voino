@@ -750,7 +750,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                 ),
                 TextButton(
                   style: link,
-                  onPressed: board.isEmpty ? null : () => setState(() => view = 'board'),
+                  onPressed: () => setState(() => view = 'board'),
                   child: const Text('Go to board'),
                 ),
               ],

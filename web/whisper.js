@@ -12,6 +12,7 @@ const TRANSFORMERS = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8
 const VARIANTS = {
   multi: { label: 'Stock tiny (MIT)', model: 'Xenova/whisper-tiny', lang: 'hi' },
   hinglish: { label: 'Hinglish tiny (test only)', model: 'hinglish', local: true, lang: null },
+  vaani: { label: 'Vaani Hindi tiny (Apache-2.0)', model: 'vaani', local: true, lang: 'hi' },
 };
 let variant = (() => { try { const v = localStorage.getItem('voinoAsr'); return VARIANTS[v] ? v : 'multi'; } catch (_) { return 'multi'; } })();
 const asrPromises = {};
@@ -39,9 +40,10 @@ function hinglishCache(base) {
   return {
     async match(req) {
       const url = typeof req === 'string' ? req : req.url;
-      if (!url.endsWith('/hinglish/onnx/decoder_model_merged_quantized.onnx')) return undefined;
+      const m = url.match(/\/(hinglish|vaani)\/onnx\/decoder_model_merged_quantized\.onnx$/);
+      if (!m) return undefined;
       const bufs = await Promise.all(PARTS.map(async (n) => {
-        const r = await fetch(base + 'hinglish/onnx/' + n);
+        const r = await fetch(base + m[1] + '/onnx/' + n);
         if (!r.ok) throw new Error('model part missing: ' + n);
         return r.arrayBuffer();
       }));
@@ -58,6 +60,7 @@ function loadModel(onProgress) {
       const { pipeline, env, Tensor } = await import(TRANSFORMERS);
       TensorCls = Tensor;
       env.useBrowserCache = true;
+      try { env.backends.onnx.wasm.proxy = true; } catch (_) {} // run inference in a worker, off the UI thread
       if (v.local) {
         const base = new URL('models/', globalThis.document?.baseURI || location.href).href;
         env.allowLocalModels = true; env.allowRemoteModels = false; env.localModelPath = base;
@@ -98,6 +101,7 @@ function resetSegment() {
 
 // Every decode is recorded here (window.voinoLog) and shown in the ASR debug panel.
 const log = (window.voinoLog = []);
+const capture = (window.voinoCapture = { samples: 0, t0: 0 }); // audio actually received vs wall clock (detects dropped audio)
 let onLog = null;
 
 async function decode(asr, samples, isFinal) {
@@ -169,20 +173,49 @@ async function start(onText, onProgress, onError, onPartial, onStats) {
   });
   audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: RATE });
   source = audioCtx.createMediaStreamSource(stream);
-  proc = audioCtx.createScriptProcessor(BUFFER, 1, 1);
   resetSegment();
-  proc.onaudioprocess = (e) => {
+  const onFrame = (data) => {
     if (!running) return;
-    const data = new Float32Array(e.inputBuffer.getChannelData(0));
     let sum = 0;
     for (let i = 0; i < data.length; i++) sum += data[i] * data[i];
     if (Math.sqrt(sum / data.length) >= SILENCE_RMS) { lastSpeechAt = performance.now(); speechSamples += data.length; }
     seg.push(data); segSamples += data.length;
+    capture.samples += data.length;
+    if (capture.keep) capture.keep.push(data);
   };
-  source.connect(proc);
-  proc.connect(audioCtx.destination); // required by some browsers; the output buffer stays silent
+  // Capture on the audio thread (AudioWorklet). A ScriptProcessor runs on the main thread, and the WASM
+  // decode blocks that thread for seconds, which silently DROPS microphone audio (measured in Chromium).
+  let worklet = false;
+  try {
+    const code = `class Cap extends AudioWorkletProcessor {
+      constructor() { super(); this.buf = new Float32Array(2048); this.n = 0; }
+      process(inputs) {
+        const c = inputs[0] && inputs[0][0];
+        if (c) for (let i = 0; i < c.length; i++) {
+          this.buf[this.n++] = c[i];
+          if (this.n === 2048) { this.port.postMessage(this.buf, [this.buf.buffer]); this.buf = new Float32Array(2048); this.n = 0; }
+        }
+        return true;
+      }
+    }
+    registerProcessor('voino-cap', Cap);`;
+    const url = URL.createObjectURL(new Blob([code], { type: 'application/javascript' }));
+    await audioCtx.audioWorklet.addModule(url);
+    URL.revokeObjectURL(url);
+    proc = new AudioWorkletNode(audioCtx, 'voino-cap', { numberOfInputs: 1, numberOfOutputs: 0 });
+    proc.port.onmessage = (e) => onFrame(e.data);
+    source.connect(proc);
+    worklet = true;
+  } catch (_) { /* fall back below */ }
+  if (!worklet) {
+    proc = audioCtx.createScriptProcessor(BUFFER, 1, 1);
+    proc.onaudioprocess = (e) => onFrame(new Float32Array(e.inputBuffer.getChannelData(0)));
+    source.connect(proc);
+    proc.connect(audioCtx.destination); // required by some browsers; the output buffer stays silent
+  }
+  window.voinoCapture.worklet = worklet;
   const cb = { onText, onError, onPartial, onStats };
-  running = true;
+  running = true; capture.samples = 0; capture.t0 = performance.now();
   timer = setInterval(() => tick(asr, cb), STEP_MS);
   window.__voinoCb = { asr, cb };
 }

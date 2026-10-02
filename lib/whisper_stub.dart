@@ -6,6 +6,7 @@ class WhisperEngine {
     required void Function(String text) onText,
     required void Function(int percent) onProgress,
     required void Function(String message) onError,
+    void Function(String partial)? onPartial,
   }) async =>
       throw UnsupportedError('Whisper is only available on web.');
 

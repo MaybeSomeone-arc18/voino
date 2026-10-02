@@ -12,7 +12,7 @@ external JSPromise<JSAny?> _start(JSFunction onText, JSFunction onProgress, JSFu
 @JS('voinoWhisper.stop')
 external JSPromise<JSAny?> _stop();
 
-/// Whisper tiny.en running in the browser (see web/whisper.js).
+/// Whisper tiny (multilingual) running in the browser (see web/whisper.js).
 class WhisperEngine {
   static bool get supported => _ns != null && _supported;
 

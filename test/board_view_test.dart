@@ -46,7 +46,7 @@ void main() {
     await t.tap(find.text('Draw box'));
     await t.pumpAndSettle();
     expect(c.tool, Tool.box);
-    final origin = t.getTopLeft(find.byType(InteractiveViewer)) + const Offset(8, 8);
+    final origin = t.getTopLeft(find.byType(InteractiveViewer)) + const Offset(30, 120);
     await t.dragFrom(origin, const Offset(140, 100));
     await t.pumpAndSettle();
     expect(c.shapes.length, n + 1);

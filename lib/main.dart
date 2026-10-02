@@ -646,7 +646,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
       backgroundColor: paper,
       body: Stack(
         children: [
-          if (view == 'listen' || view == 'board')
+          if (view == 'listen')
             Positioned.fill(
               child: SvgPicture.asset(
                 'assets/voino_bg.svg',
@@ -656,7 +656,11 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
             ),
           if (view != 'listen')
             Positioned.fill(
-              child: ColoredBox(color: paper.withValues(alpha: 0.86)),
+              child: ColoredBox(
+                color: view == 'board'
+                    ? paper
+                    : paper.withValues(alpha: 0.86),
+              ),
             ),
           SafeArea(
             child: Column(

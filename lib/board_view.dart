@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'board.dart';
 import 'board_controller.dart';
+import 'board_glass.dart';
 import 'rough.dart';
 
 const _ink = Color(0xFF2B2A28),
@@ -66,6 +67,12 @@ class _BoardPanelState extends State<BoardPanel> {
   ShapeModel? _live;
   Offset? _dragStart;
   bool _panMode = false;
+  Object?
+  _editing; // CardModel | ShapeModel | Link whose text is being typed in place
+  bool _editIsNew = false;
+  final _etc = TextEditingController();
+  final _efocus = FocusNode();
+  Offset _dblAt = Offset.zero;
   bool get _mobile => MediaQuery.sizeOf(context).width < 600;
 
   BoardController get c => widget.controller;
@@ -82,64 +89,53 @@ class _BoardPanelState extends State<BoardPanel> {
     c.removeListener(_onChange);
     _tc.dispose();
     _focus.dispose();
+    _etc.dispose();
+    _efocus.dispose();
     super.dispose();
   }
 
   void _onChange() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    // Selecting something else, switching tool or undoing ends the edit and keeps the text.
+    if (_editing != null && !identical(c.selected, _editing)) _commitEdit();
+    setState(() {});
   }
+
+  // Room above and below the content, so the floating bars never have to cover it.
+  static const _padTop = 72.0, _padBottom = 96.0, _padSide = 12.0;
 
   void _fit() {
     if (_viewport.isEmpty) return;
     final b = c.bounds;
     final s = math
-        .min(_viewport.width / b.width, _viewport.height / b.height)
+        .min(
+          (_viewport.width - 2 * _padSide) / b.width,
+          (_viewport.height - _padTop - _padBottom) / b.height,
+        )
         .clamp(0.25, 1.0);
-    // Anchor to the canvas origin: centering would show empty space outside the canvas, where nothing can be drawn.
     _tc.value = Matrix4.diagonal3Values(s, s, 1)
-      ..setTranslationRaw(-b.left * s, -b.top * s, 0);
+      ..setTranslationRaw(_padSide - b.left * s, _padTop - b.top * s, 0);
   }
 
   String _hint() => switch (c.tool) {
     Tool.select =>
       _mobile
-          ? 'Tap to select. Double-tap to edit. Move pans; pinch to zoom.'
-          : 'Drag cards and shapes to move them. Double-tap to edit. Drag empty space to pan, pinch or scroll to zoom.',
+          ? 'Tap to select. Double-tap to write. Move pans; pinch to zoom.'
+          : 'Drag cards to move them. Double-click to edit. Drag empty space to pan. Double-click anything to write in it. Keys: T text, V select, N note, R box, O circle, A arrow, ? for all.',
     Tool.box => 'Drag on empty space to draw a box.',
     Tool.circle => 'Drag on empty space to draw a circle.',
+    Tool.text => 'Tap anywhere to write.',
     Tool.arrow =>
       c.arrowFrom == null
           ? 'Tap the first card.'
           : 'Now tap the card the arrow should point to.',
   };
 
-  Widget _pill(
-    String label,
-    VoidCallback? f, {
-    bool on = false,
-  }) => OutlinedButton(
-    onPressed: f,
-    style: OutlinedButton.styleFrom(
-      foregroundColor: _ink,
-      backgroundColor: on ? _gold.withValues(alpha: .28) : Colors.white,
-      side: const BorderSide(color: _ink, width: 1.4),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      textStyle: TextStyle(
-        fontFamily: hand,
-        fontSize: _mobile ? 17 : 19,
-        fontWeight: FontWeight.w700,
-      ),
-      padding: EdgeInsets.symmetric(horizontal: _mobile ? 6 : 14, vertical: 6),
-    ),
-    child: Text(label),
-  );
-
-  @override
   Widget build(BuildContext context) {
     final drawTool = c.tool == Tool.box || c.tool == Tool.circle;
     final height = math.max(
-      420.0,
-      math.min(720.0, MediaQuery.of(context).size.height * .62),
+      460.0,
+      math.min(720.0, MediaQuery.of(context).size.height * .66),
     );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -157,73 +153,23 @@ class _BoardPanelState extends State<BoardPanel> {
         const SizedBox(height: 4),
         Text(
           _panMode ? 'Drag anywhere to move. Pinch to zoom.' : _hint(),
-          style: const TextStyle(
+          style: TextStyle(
             fontFamily: hand,
             fontSize: 20,
-            color: Colors.black54,
+            color: _ink.withValues(alpha: .68),
             height: 1.1,
           ),
         ),
-        const SizedBox(height: 10),
-        if (_mobile)
-          _mobileTools()
-        else
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _pill('+ Add a note', () {
-                final at = _viewport.isEmpty
-                    ? const Offset(60, 60)
-                    : _tc.toScene(_viewport.center(Offset.zero));
-                c.addCard(at - Offset(cardSize.width / 2, cardSize.height / 2));
-              }),
-              _pill(
-                c.tool == Tool.arrow
-                    ? (c.arrowFrom == null
-                          ? 'Tap first card'
-                          : 'Tap second card')
-                    : 'Connect two cards',
-                () => c.setTool(Tool.arrow),
-                on: c.tool == Tool.arrow,
-              ),
-              _pill(
-                'Draw circle',
-                () => c.setTool(Tool.circle),
-                on: c.tool == Tool.circle,
-              ),
-              _pill(
-                'Draw box',
-                () => c.setTool(Tool.box),
-                on: c.tool == Tool.box,
-              ),
-              _pill('Edit text', c.selected == null ? null : _editSelected),
-              _pill(
-                'Delete selected',
-                c.selected == null ? null : c.deleteSelected,
-              ),
-              _pill('Undo', c.canUndo ? c.undo : null),
-              _pill('Fit view', _fit),
-              _pill('Save board .json', widget.onSave),
-              _pill('Open board file', widget.onOpen),
-            ],
-          ),
         const SizedBox(height: 12),
         Container(
           height: height,
           decoration: BoxDecoration(
             color: _paper,
-            border: Border.all(color: _ink, width: 1.6),
-            borderRadius: BorderRadius.circular(14),
-            boxShadow: [
-              BoxShadow(
-                color: _ink.withValues(alpha: .16),
-                offset: const Offset(4, 4),
-              ),
-            ],
+            border: Border.all(color: _ink.withValues(alpha: .2), width: 1),
+            borderRadius: BorderRadius.circular(16),
           ),
           child: ClipRRect(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(15),
             child: LayoutBuilder(
               builder: (ctx, cons) {
                 _viewport = Size(cons.maxWidth, cons.maxHeight);
@@ -233,7 +179,27 @@ class _BoardPanelState extends State<BoardPanel> {
                     if (mounted) _fit();
                   });
                 }
-                return _canvas(drawTool);
+                return Stack(
+                  children: [
+                    Positioned.fill(child: _canvas(drawTool)),
+                    Positioned(top: 10, right: 10, child: _viewBar()),
+                    Positioned(
+                      left: 10,
+                      right: 10,
+                      bottom: 12,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (c.selected != null) ...[
+                            _selectionBar(),
+                            const SizedBox(height: 8),
+                          ],
+                          _mobile ? _mobileTools() : _toolBar(),
+                        ],
+                      ),
+                    ),
+                  ],
+                );
               },
             ),
           ),
@@ -241,6 +207,135 @@ class _BoardPanelState extends State<BoardPanel> {
       ],
     );
   }
+
+  /// Top-right cluster: undo, redo, zoom, and (on larger screens) fit and file actions.
+  Widget _viewBar() => BoardBar(
+    radius: 14,
+    padding: const EdgeInsets.all(4),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        BoardButton(
+          icon: Icons.undo,
+          tooltip: 'Undo',
+          onPressed: c.canUndo ? c.undo : null,
+        ),
+        BoardButton(
+          icon: Icons.redo,
+          tooltip: 'Redo',
+          onPressed: c.canRedo ? c.redo : null,
+        ),
+        if (!_mobile) ...[
+          BoardButton(
+            icon: Icons.keyboard_outlined,
+            tooltip: 'Shortcuts (?)',
+            onPressed: _showShortcuts,
+          ),
+          BoardButton(
+            icon: Icons.remove,
+            tooltip: 'Zoom out',
+            onPressed: () => _zoom(1 / 1.35),
+          ),
+          BoardButton(
+            icon: Icons.add,
+            tooltip: 'Zoom in',
+            onPressed: () => _zoom(1.35),
+          ),
+          BoardButton(
+            icon: Icons.fit_screen,
+            tooltip: 'Fit view',
+            onPressed: _fit,
+          ),
+          BoardButton(
+            icon: Icons.download,
+            tooltip: 'Save board .json',
+            onPressed: widget.onSave,
+          ),
+          BoardButton(
+            icon: Icons.folder_open,
+            tooltip: 'Open board file',
+            onPressed: widget.onOpen,
+          ),
+        ],
+      ],
+    ),
+  );
+
+  /// Appears only while something is selected, like Excalidraw's properties panel.
+  Widget _selectionBar() {
+    final sel = c.selected;
+    return BoardBar(
+      radius: 14,
+      padding: const EdgeInsets.all(4),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          BoardButton(
+            label: _mobile ? 'Edit' : 'Edit text',
+            onPressed: _editSelected,
+          ),
+          if (sel is CardModel || sel is ShapeModel)
+            BoardButton(
+              icon: Icons.copy_all_outlined,
+              tooltip: 'Duplicate',
+              onPressed: c.duplicateSelected,
+            ),
+          BoardButton(
+            label: _mobile ? 'Delete' : 'Delete selected',
+            onPressed: c.deleteSelected,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _toolBar() => BoardBar(
+    child: SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          BoardButton(label: '+ Add a note', onPressed: _addNote),
+          const SizedBox(width: 6),
+          BoardButton(
+            label: c.tool == Tool.arrow
+                ? (c.arrowFrom == null ? 'Tap first card' : 'Tap second card')
+                : 'Connect two cards',
+            tooltip: 'Connect (A)',
+            onPressed: () => c.setTool(Tool.arrow),
+            on: c.tool == Tool.arrow,
+          ),
+          const SizedBox(width: 6),
+          BoardButton(
+            label: 'Draw circle',
+            tooltip: 'Circle (O)',
+            onPressed: () => c.setTool(Tool.circle),
+            on: c.tool == Tool.circle,
+          ),
+          const SizedBox(width: 6),
+          BoardButton(
+            label: 'Draw box',
+            tooltip: 'Box (R)',
+            onPressed: () => c.setTool(Tool.box),
+            on: c.tool == Tool.box,
+          ),
+          const SizedBox(width: 6),
+          BoardButton(
+            label: 'Text',
+            tooltip: 'Text (T)',
+            onPressed: () => c.setTool(Tool.text),
+            on: c.tool == Tool.text,
+          ),
+          const SizedBox(width: 6),
+          BoardButton(
+            icon: Icons.more_horiz,
+            tooltip: 'More board tools',
+            onPressed: _moreTools,
+          ),
+        ],
+      ),
+    ),
+  );
 
   void _addNote() {
     final at = _viewport.isEmpty
@@ -273,105 +368,113 @@ class _BoardPanelState extends State<BoardPanel> {
       );
   }
 
-  Widget _mobileTools() => Column(
-    children: [
-      Row(
-        children: [
-          Expanded(
-            child: _pill('Select', () {
+  Widget _mobileTools() => BoardBar(
+    padding: const EdgeInsets.all(5),
+    child: Row(
+      children: [
+        Expanded(
+          child: BoardButton(
+            label: 'Select',
+            onPressed: () {
               setState(() => _panMode = false);
               if (c.tool != Tool.select) c.setTool(Tool.select);
-            }, on: !_panMode && c.tool == Tool.select),
+            },
+            on: !_panMode && c.tool == Tool.select,
           ),
-          const SizedBox(width: 6),
-          Expanded(
-            child: _pill('Move', () {
+        ),
+        const SizedBox(width: 4),
+        Expanded(
+          child: BoardButton(
+            label: 'Move',
+            onPressed: () {
               if (c.tool != Tool.select) c.setTool(Tool.select);
               c.select(null);
               setState(() => _panMode = true);
-            }, on: _panMode),
+            },
+            on: _panMode,
           ),
-          const SizedBox(width: 6),
-          Expanded(child: _pill('+ Note', _addNote)),
-          IconButton(
-            tooltip: 'More board tools',
-            onPressed: _moreTools,
-            icon: const Icon(Icons.more_horiz),
-          ),
-        ],
-      ),
-      Wrap(
-        alignment: WrapAlignment.end,
-        spacing: 6,
-        children: [
-          if (c.selected != null) ...[
-            _pill('Edit', _editSelected),
-
-            _pill('Delete', c.deleteSelected),
-          ],
-
-          IconButton(
-            tooltip: 'Zoom out',
-            onPressed: () => _zoom(1 / 1.35),
-            icon: const Icon(Icons.remove),
-          ),
-          IconButton(
-            tooltip: 'Zoom in',
-            onPressed: () => _zoom(1.35),
-            icon: const Icon(Icons.add),
-          ),
-          IconButton(
-            tooltip: 'Undo',
-            onPressed: c.canUndo ? c.undo : null,
-            icon: const Icon(Icons.undo),
-          ),
-        ],
-      ),
-    ],
+        ),
+        const SizedBox(width: 4),
+        Expanded(
+          child: BoardButton(label: '+ Note', onPressed: _addNote),
+        ),
+        const SizedBox(width: 4),
+        BoardButton(
+          icon: Icons.more_horiz,
+          tooltip: 'More board tools',
+          onPressed: _moreTools,
+        ),
+      ],
+    ),
   );
 
   void _moreTools() {
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: _paper,
+      showDragHandle: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
       builder: (sheetContext) => SafeArea(
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Padding(
-                padding: EdgeInsets.all(16),
-                child: Text(
-                  'Board tools',
-                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
-                ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+          child: Material(
+            color: _paper,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.fromLTRB(16, 10, 16, 8),
+                    child: Text(
+                      'Board tools',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                        color: _ink,
+                      ),
+                    ),
+                  ),
+                  for (final item in <(String, IconData, VoidCallback)>[
+                    (
+                      'Connect cards',
+                      Icons.arrow_forward,
+                      () => c.setTool(Tool.arrow),
+                    ),
+                    (
+                      'Draw circle',
+                      Icons.circle_outlined,
+                      () => c.setTool(Tool.circle),
+                    ),
+                    ('Draw box', Icons.crop_square, () => c.setTool(Tool.box)),
+                    ('Add text', Icons.text_fields, () => c.setTool(Tool.text)),
+                    ('Fit view', Icons.fit_screen, _fit),
+                    ('Zoom in', Icons.zoom_in, () => _zoom(1.35)),
+                    ('Zoom out', Icons.zoom_out, () => _zoom(1 / 1.35)),
+                    ('Save board .json', Icons.download, widget.onSave),
+                    ('Open board file', Icons.folder_open, widget.onOpen),
+                    (
+                      'Keyboard shortcuts',
+                      Icons.keyboard_outlined,
+                      _showShortcuts,
+                    ),
+                  ])
+                    ListTile(
+                      leading: Icon(item.$2, color: _ink),
+                      title: Text(
+                        item.$1,
+                        style: const TextStyle(color: _ink, fontSize: 16),
+                      ),
+                      onTap: () {
+                        Navigator.pop(sheetContext);
+                        setState(() => _panMode = false);
+                        item.$3();
+                      },
+                    ),
+                ],
               ),
-              for (final item in <(String, IconData, VoidCallback)>[
-                (
-                  'Connect cards',
-                  Icons.arrow_forward,
-                  () => c.setTool(Tool.arrow),
-                ),
-                (
-                  'Draw circle',
-                  Icons.circle_outlined,
-                  () => c.setTool(Tool.circle),
-                ),
-                ('Draw box', Icons.crop_square, () => c.setTool(Tool.box)),
-                ('Fit view', Icons.fit_screen, _fit),
-                ('Save board .json', Icons.download, widget.onSave),
-                ('Open board file', Icons.folder_open, widget.onOpen),
-              ])
-                ListTile(
-                  leading: Icon(item.$2),
-                  title: Text(item.$1),
-                  onTap: () {
-                    Navigator.pop(sheetContext);
-                    setState(() => _panMode = false);
-                    item.$3();
-                  },
-                ),
-            ],
+            ),
           ),
         ),
       ),
@@ -382,23 +485,95 @@ class _BoardPanelState extends State<BoardPanel> {
     final size = c.extent;
     final byId = {for (final k in c.cards) k.id: k};
     final sel = c.selected;
-    return CallbackShortcuts(
-      bindings: {
-        const SingleActivator(LogicalKeyboardKey.keyZ, meta: true): c.undo,
-        const SingleActivator(LogicalKeyboardKey.delete): c.deleteSelected,
-        const SingleActivator(LogicalKeyboardKey.backspace): c.deleteSelected,
-        const SingleActivator(LogicalKeyboardKey.keyZ, control: true): c.undo,
+    // While typing in place only Escape is bound, so letters and Backspace go to the text.
+    final bindings = <ShortcutActivator, VoidCallback>{
+      const SingleActivator(LogicalKeyboardKey.keyZ, meta: true): c.undo,
+      const SingleActivator(LogicalKeyboardKey.keyZ, control: true): c.undo,
+      const SingleActivator(LogicalKeyboardKey.keyZ, meta: true, shift: true):
+          c.redo,
+      const SingleActivator(
+        LogicalKeyboardKey.keyZ,
+        control: true,
+        shift: true,
+      ): c.redo,
+      const SingleActivator(LogicalKeyboardKey.keyY, control: true): c.redo,
+      const SingleActivator(LogicalKeyboardKey.keyD, meta: true):
+          c.duplicateSelected,
+      const SingleActivator(LogicalKeyboardKey.keyD, control: true):
+          c.duplicateSelected,
+      const SingleActivator(LogicalKeyboardKey.delete): c.deleteSelected,
+      const SingleActivator(LogicalKeyboardKey.backspace): c.deleteSelected,
+      const SingleActivator(LogicalKeyboardKey.escape): () {
+        _panMode = false;
+        c.arrowFrom = null;
+        if (c.tool != Tool.select) c.setTool(Tool.select);
+        c.select(null);
       },
+      const SingleActivator(LogicalKeyboardKey.keyV): () {
+        if (c.tool != Tool.select) c.setTool(Tool.select);
+      },
+      const SingleActivator(LogicalKeyboardKey.keyH): () =>
+          setState(() => _panMode = !_panMode),
+      const SingleActivator(LogicalKeyboardKey.keyN): _addNote,
+      const SingleActivator(LogicalKeyboardKey.keyT): () {
+        if (c.tool != Tool.text) c.setTool(Tool.text);
+      },
+      const SingleActivator(LogicalKeyboardKey.enter): _editSelected,
+      const SingleActivator(LogicalKeyboardKey.slash, shift: true):
+          _showShortcuts,
+      const SingleActivator(LogicalKeyboardKey.keyR): () {
+        if (c.tool != Tool.box) c.setTool(Tool.box);
+      },
+      const SingleActivator(LogicalKeyboardKey.keyO): () {
+        if (c.tool != Tool.circle) c.setTool(Tool.circle);
+      },
+      const SingleActivator(LogicalKeyboardKey.keyA): () {
+        if (c.tool != Tool.arrow) c.setTool(Tool.arrow);
+      },
+      const SingleActivator(LogicalKeyboardKey.digit1, shift: true): _fit,
+      const SingleActivator(LogicalKeyboardKey.equal): () => _zoom(1.35),
+      const SingleActivator(LogicalKeyboardKey.minus): () => _zoom(1 / 1.35),
+    };
+    final editBindings = <ShortcutActivator, VoidCallback>{
+      const SingleActivator(LogicalKeyboardKey.escape): () => c.select(null),
+    };
+    return CallbackShortcuts(
+      bindings: _editing != null ? editBindings : bindings,
       child: Focus(
         focusNode: _focus,
+        onKeyEvent: (node, e) {
+          // Typing with something selected starts writing in it (tool letters keep their job).
+          final ch = e.character;
+          if (e is KeyDownEvent &&
+              _editing == null &&
+              c.selected != null &&
+              ch != null &&
+              ch.length == 1 &&
+              ch.trim().isNotEmpty &&
+              !HardwareKeyboard.instance.isControlPressed &&
+              !HardwareKeyboard.instance.isMetaPressed &&
+              !HardwareKeyboard.instance.isAltPressed &&
+              !'vhtnroa+-=?1!'.contains(ch.toLowerCase())) {
+            _beginEdit(c.selected!, seed: ch);
+            return KeyEventResult.handled;
+          }
+          return KeyEventResult.ignored;
+        },
         child: Listener(
-          onPointerDown: (_) => _focus.requestFocus(),
+          onPointerDown: (_) {
+            if (_editing == null) _focus.requestFocus();
+          },
           child: InteractiveViewer(
             transformationController: _tc,
             constrained: false,
             minScale: .2,
             maxScale: 3,
-            boundaryMargin: EdgeInsets.zero,
+            boundaryMargin: const EdgeInsets.fromLTRB(
+              _padSide,
+              _padTop,
+              _padSide,
+              _padBottom,
+            ),
             panEnabled: !drawTool,
             scaleEnabled: !drawTool,
             child: SizedBox(
@@ -410,10 +585,17 @@ class _BoardPanelState extends State<BoardPanel> {
                   Positioned.fill(
                     child: GestureDetector(
                       behavior: HitTestBehavior.opaque,
-                      onTap: () {
+                      onTapUp: (d) {
+                        if (c.tool == Tool.text) {
+                          final t = c.addText(d.localPosition);
+                          _beginEdit(t);
+                          return;
+                        }
                         c.arrowFrom = null;
                         c.select(null);
                       },
+                      onDoubleTapDown: (d) => _dblAt = d.localPosition,
+                      onDoubleTap: _doubleTapCanvas,
                       child: Listener(
                         behavior: HitTestBehavior.opaque,
                         onPointerDown: drawTool
@@ -449,15 +631,18 @@ class _BoardPanelState extends State<BoardPanel> {
                   ),
                   Positioned.fill(
                     child: IgnorePointer(
-                      ignoring: drawTool || _panMode,
+                      ignoring: drawTool || _panMode || c.tool == Tool.text,
                       child: Stack(
                         clipBehavior: Clip.none,
                         children: [
                           for (final s in c.shapes) _shape(s),
                           for (final l in c.links) ?_arrowView(l, byId),
                           for (final k in c.cards) _card(k),
-                          if (sel is ShapeModel && !_panMode)
+                          if (sel is ShapeModel &&
+                              !_panMode &&
+                              _editing == null)
                             _resizeHandle(sel),
+                          if (_editing != null) _editor(_editing!, byId),
                         ],
                       ),
                     ),
@@ -475,6 +660,20 @@ class _BoardPanelState extends State<BoardPanel> {
         ),
       ),
     );
+  }
+
+  /// Double-click on empty canvas writes there; inside a shape it writes in the shape.
+  void _doubleTapCanvas() {
+    if (c.tool != Tool.select) return;
+    final p = _dblAt;
+    for (final s in c.shapes.reversed) {
+      if (s.rect.contains(p)) {
+        _beginEdit(s);
+        return;
+      }
+    }
+    final t = c.addText(p);
+    _beginEdit(t);
   }
 
   void _finishDraw() {
@@ -500,7 +699,7 @@ class _BoardPanelState extends State<BoardPanel> {
         behavior: HitTestBehavior
             .deferToChild, // only the stroke is grabbable, so cards inside stay clickable
         onTap: () => c.select(s),
-        onDoubleTap: () => _editLabel(s),
+        onDoubleTap: () => _beginEdit(s),
         onPanStart: (_) {
           c.checkpoint();
           c.select(s);
@@ -566,7 +765,7 @@ class _BoardPanelState extends State<BoardPanel> {
       child: GestureDetector(
         behavior: HitTestBehavior.deferToChild,
         onTap: () => c.select(l),
-        onDoubleTap: () => _editLabel(l),
+        onDoubleTap: () => _beginEdit(l),
         child: CustomPaint(
           painter: _ArrowPainter(
             p - box.topLeft,
@@ -604,7 +803,7 @@ class _BoardPanelState extends State<BoardPanel> {
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () => _tapCard(k),
-        onDoubleTap: moving ? () => _editCard(k) : null,
+        onDoubleTap: moving ? () => _beginEdit(k) : null,
         onPanStart: moving
             ? (_) {
                 c.checkpoint();
@@ -703,106 +902,230 @@ class _BoardPanelState extends State<BoardPanel> {
 
   void _editSelected() {
     final s = c.selected;
-    if (s is CardModel) {
-      _editCard(s);
-    } else if (s != null) {
-      _editLabel(s);
+    if (s != null) _beginEdit(s);
+  }
+
+  String _textOf(Object o) => o is CardModel
+      ? o.text
+      : o is ShapeModel
+      ? o.label
+      : (o as Link).label;
+
+  /// Writes in place, the way Excalidraw does: no dialog, the text field sits on the element.
+  void _beginEdit(Object o, {String? seed}) {
+    if (_editing != null && !identical(_editing, o)) _commitEdit();
+    _panMode = false;
+    _editing = o;
+    _editIsNew = o is ShapeModel && o.type == 'text' && o.label.isEmpty;
+    final t = seed ?? _textOf(o);
+    _etc.value = TextEditingValue(
+      text: t,
+      selection: TextSelection.collapsed(offset: t.length),
+    );
+    if (!identical(c.selected, o)) c.select(o);
+    setState(() {});
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _editing == o) _efocus.requestFocus();
+    });
+  }
+
+  void _commitEdit() {
+    final o = _editing;
+    if (o == null) return;
+    _editing = null;
+    final v = _etc.text;
+    final isNew = _editIsNew;
+    _editIsNew = false;
+    if (o is ShapeModel && o.type == 'text' && v.trim().isEmpty) {
+      // An empty text element is not kept (and an empty new one leaves no undo step).
+      if (isNew) {
+        c.undo();
+      } else {
+        c.select(o);
+        c.deleteSelected();
+      }
+      return;
+    }
+    if (v != _textOf(o)) {
+      if (!isNew) c.checkpoint();
+      if (o is CardModel) {
+        o.text = v.length > 1400 ? v.substring(0, 1400) : v;
+      } else if (o is ShapeModel) {
+        o.label = v.length > 400 ? v.substring(0, 400) : v;
+        if (o.type == 'text') {
+          final tp = _text(o.label, 26, _ink, maxW: o.rect.width, lines: 12);
+          o.rect = Rect.fromLTWH(
+            o.rect.left,
+            o.rect.top,
+            o.rect.width,
+            math.max(44, tp.height + 14),
+          );
+        }
+      } else if (o is Link) {
+        o.label = v.length > 60 ? v.substring(0, 60) : v;
+      }
+      c.changed();
     }
   }
 
-  Future<void> _editLabel(Object o) async {
-    final current = o is ShapeModel ? o.label : (o as Link).label;
-    final ctl = TextEditingController(text: current);
-    final ok = await showDialog<bool>(
+  /// Where the in-place editor sits (scene coordinates) and which style it uses.
+  Widget _editor(Object o, Map<String, CardModel> byId) {
+    Rect r;
+    TextStyle style;
+    Color fill = Colors.white;
+    var multi = true;
+    if (o is CardModel) {
+      r = Rect.fromLTWH(
+        o.x + 8,
+        o.y + 8,
+        cardSize.width - 22,
+        cardSize.height - 22,
+      );
+      fill = cardColors[o.color] ?? Colors.white;
+      style = TextStyle(
+        fontFamily: hand,
+        fontSize: o.type == 'title' ? 22 : 21,
+        height: 1.05,
+        color: _ink,
+        fontWeight: o.type == 'title' ? FontWeight.w700 : FontWeight.w500,
+      );
+    } else if (o is ShapeModel && o.type == 'text') {
+      r = Rect.fromLTWH(
+        o.rect.left,
+        o.rect.top,
+        math.max(160, o.rect.width),
+        44,
+      );
+      style = const TextStyle(
+        fontFamily: hand,
+        fontSize: 26,
+        height: 1.1,
+        color: _ink,
+        fontWeight: FontWeight.w600,
+      );
+    } else if (o is ShapeModel) {
+      final w = math.max(120.0, math.min(240.0, o.rect.width - 16));
+      r = o.type == 'circle'
+          ? Rect.fromLTWH(o.rect.center.dx - w / 2, o.rect.top - 34, w, 34)
+          : Rect.fromLTWH(o.rect.left + 8, o.rect.top + 6, w, 34);
+      style = const TextStyle(
+        fontFamily: hand,
+        fontSize: 23,
+        color: _brown,
+        fontWeight: FontWeight.w600,
+      );
+      multi = false;
+    } else {
+      final l = o as Link;
+      final a = byId[l.from], b = byId[l.to];
+      final mid = a == null || b == null
+          ? const Offset(60, 60)
+          : (Offset(a.x, a.y) + Offset(b.x, b.y)) / 2 +
+                Offset(cardSize.width / 2, cardSize.height / 2);
+      r = Rect.fromCenter(center: mid, width: 150, height: 34);
+      style = const TextStyle(
+        fontFamily: hand,
+        fontSize: 20,
+        color: _arrow,
+        fontWeight: FontWeight.w600,
+      );
+      multi = false;
+    }
+    return Positioned.fromRect(
+      rect: r,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6),
+        decoration: BoxDecoration(
+          color: fill,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: _gold, width: 1.6),
+        ),
+        child: Focus(
+          onKeyEvent: (n, e) {
+            if (e is KeyDownEvent &&
+                e.logicalKey == LogicalKeyboardKey.escape) {
+              c.select(null); // ends the edit and keeps what was typed
+              return KeyEventResult.handled;
+            }
+            return KeyEventResult.ignored;
+          },
+          child: TextField(
+            controller: _etc,
+            focusNode: _efocus,
+            maxLines: multi ? null : 1,
+            minLines: 1,
+            style: style,
+            cursorColor: _gold,
+            decoration: const InputDecoration(
+              isDense: true,
+              border: InputBorder.none,
+              contentPadding: EdgeInsets.symmetric(vertical: 6),
+            ),
+            onSubmitted: multi ? null : (_) => c.select(null),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showShortcuts() {
+    const rows = [
+      ('V', 'Select'),
+      ('H', 'Hand: drag to move the canvas'),
+      ('T', 'Text: tap anywhere and write'),
+      ('N', 'New note card'),
+      ('R', 'Draw a box'),
+      ('O', 'Draw a circle'),
+      ('A', 'Connect two cards with an arrow'),
+      ('Double-click', 'Write in anything, or on empty space'),
+      ('Enter', 'Write in the selected item'),
+      ('Esc', 'Finish writing, or go back to select'),
+      ('Ctrl/Cmd + D', 'Duplicate'),
+      ('Ctrl/Cmd + Z', 'Undo (add Shift to redo)'),
+      ('Delete', 'Delete selected'),
+      ('Shift + 1', 'Fit view'),
+      ('+ / -', 'Zoom'),
+    ];
+    showDialog<void>(
       context: context,
       builder: (d) => AlertDialog(
-        title: Text(o is ShapeModel ? 'Label this shape' : 'Label this arrow'),
-        content: TextField(
-          controller: ctl,
-          autofocus: true,
-          maxLength: 60,
-          decoration: const InputDecoration(hintText: 'e.g. leads to'),
+        backgroundColor: _paper,
+        title: const Text('Board shortcuts'),
+        content: SizedBox(
+          width: 360,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final r in rows)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 5),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SizedBox(
+                          width: 110,
+                          child: Text(
+                            r.$1,
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                        Expanded(child: Text(r.$2)),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(d, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(d, true),
-            child: const Text('Save'),
+            onPressed: () => Navigator.pop(d),
+            child: const Text('Close'),
           ),
         ],
       ),
     );
-    if (ok != true) return;
-    c.checkpoint();
-    if (o is ShapeModel) {
-      o.label = ctl.text.trim();
-    } else if (o is Link) {
-      o.label = ctl.text.trim();
-    }
-    c.changed();
-  }
-
-  Future<void> _editCard(CardModel k) async {
-    final ctl = TextEditingController(text: k.text);
-    var color = k.color;
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (d) => StatefulBuilder(
-        builder: (d, setD) => AlertDialog(
-          title: const Text('Edit card'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: ctl,
-                maxLines: 5,
-                maxLength: 1400,
-                autofocus: true,
-              ),
-              Wrap(
-                spacing: 8,
-                children: [
-                  for (final e in cardColors.entries)
-                    GestureDetector(
-                      onTap: () => setD(() => color = e.key),
-                      child: CircleAvatar(
-                        radius: 15,
-                        backgroundColor: e.value,
-                        child: color == e.key
-                            ? const Icon(Icons.check, size: 15, color: _ink)
-                            : null,
-                      ),
-                    ),
-                ],
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.pop(d, false);
-                c.select(k);
-                c.deleteSelected();
-              },
-              child: const Text('Delete'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(d, true),
-              child: const Text('Save'),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (ok == true) {
-      c.checkpoint();
-      k.text = ctl.text;
-      k.color = color;
-      c.changed();
-    }
   }
 }
 
@@ -813,7 +1136,7 @@ class _GridPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final p = Paint()
-      ..color = _ink.withValues(alpha: .14)
+      ..color = _ink.withValues(alpha: .11)
       ..strokeWidth = 2
       ..strokeCap = StrokeCap.round;
     final pts = <Offset>[
@@ -836,37 +1159,31 @@ class _CardPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final rr = RRect.fromRectAndRadius(
       Rect.fromLTWH(3, 3, size.width - 10, size.height - 10),
-      const Radius.circular(8),
+      const Radius.circular(14),
     );
+    final fill = cardColors[k.color] ?? cardColors['mint']!;
+    // Soft shadow instead of a hard offset, a thin edge in a darker tint of the card colour.
     canvas.drawRRect(
-      rr.shift(const Offset(4, 4)),
-      Paint()..color = _ink.withValues(alpha: .16),
+      rr.shift(const Offset(0, 2)),
+      Paint()
+        ..color = _ink.withValues(alpha: .12)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3),
     );
+    canvas.drawRRect(rr, Paint()..color = fill);
     canvas.drawRRect(
       rr,
-      Paint()..color = cardColors[k.color] ?? cardColors['mint']!,
-    );
-    final seed = k.id.hashCode;
-    sketch(
-      canvas,
       Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 2.2
-        ..strokeCap = StrokeCap.round
-        ..color = _ink,
-      seed,
-      (r) => roughRect(rr.outerRect, r, wobble: 1.1),
+        ..strokeWidth = 1.4
+        ..color = Color.lerp(fill, _ink, .38)!,
     );
     if (selected || from) {
-      sketch(
-        canvas,
+      canvas.drawRRect(
+        rr.inflate(5),
         Paint()
           ..style = PaintingStyle.stroke
           ..strokeWidth = 2.6
           ..color = _gold,
-        seed + 7,
-        (r) => roughRect(rr.outerRect.inflate(7), r, wobble: .8),
-        dash: const [9, 6],
       );
     }
   }
@@ -886,6 +1203,7 @@ class _ShapePainter extends CustomPainter {
   @override
   bool? hitTest(Offset p) {
     final r = _local;
+    if (s.type == 'text') return r.inflate(8).contains(p);
     if (s.type == 'circle') {
       final cx = r.center.dx,
           cy = r.center.dy,
@@ -910,14 +1228,26 @@ class _ShapePainter extends CustomPainter {
       ..strokeWidth = 3
       ..strokeCap = StrokeCap.round
       ..color = _brown;
-    sketch(
-      canvas,
-      stroke,
-      s.hashCode,
-      (rnd) => s.type == 'circle' ? roughEllipse(r, rnd) : roughRect(r, rnd),
-      dash: const [8, 3, 2, 3],
-    );
-    if (s.label.isNotEmpty) {
+    if (s.type == 'text') {
+      if (s.label.isNotEmpty) {
+        _text(
+          s.label,
+          26,
+          _ink,
+          maxW: r.width,
+          lines: 12,
+        ).paint(canvas, r.topLeft + const Offset(0, 6));
+      }
+    } else {
+      sketch(
+        canvas,
+        stroke,
+        s.hashCode,
+        (rnd) => s.type == 'circle' ? roughEllipse(r, rnd) : roughRect(r, rnd),
+        dash: const [8, 3, 2, 3],
+      );
+    }
+    if (s.type != 'text' && s.label.isNotEmpty) {
       final tp = _text(s.label, 23, _brown, maxW: math.max(40, r.width - 20));
       tp.paint(
         canvas,
@@ -945,7 +1275,7 @@ class _ShapePainter extends CustomPainter {
           width: 9,
           height: 9,
         );
-        canvas.drawRect(h, Paint()..color = Colors.white);
+        canvas.drawRect(h, Paint()..color = _paper);
         canvas.drawRect(
           h,
           Paint()

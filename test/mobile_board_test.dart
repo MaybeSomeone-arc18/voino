@@ -95,13 +95,17 @@ void main() {
     await pump(t);
     final viewer = t.widget<InteractiveViewer>(find.byType(InteractiveViewer));
     final before = viewer.transformationController!.value.getMaxScaleOnAxis();
-    await t.tap(find.byTooltip('Zoom in'));
+    await t.tap(find.byTooltip('More board tools'));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Zoom in'));
     await t.pumpAndSettle();
     expect(
       viewer.transformationController!.value.getMaxScaleOnAxis(),
       greaterThan(before),
     );
-    await t.tap(find.byTooltip('Zoom out'));
+    await t.tap(find.byTooltip('More board tools'));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Zoom out'));
     await t.pumpAndSettle();
     expect(
       viewer.transformationController!.value.getMaxScaleOnAxis(),

@@ -28,7 +28,7 @@ class Link {
 
 class ShapeModel {
   ShapeModel(this.type, this.rect, [this.label = '']);
-  String type, label; // type: circle | box
+  String type, label; // type: circle | box | text
   Rect rect;
   Map<String, dynamic> toJson() =>
       {'type': type, 'x': rect.left, 'y': rect.top, 'w': rect.width, 'h': rect.height, 'label': label};
@@ -176,7 +176,7 @@ List<ShapeModel> safeShapes(dynamic raw) {
   final shapes = <ShapeModel>[];
   if (raw is! List) return shapes;
   for (final s in raw.take(40)) {
-    if (s is! Map || !['circle', 'box'].contains(s['type']) || s['x'] is! num || s['y'] is! num) continue;
+    if (s is! Map || !['circle', 'box', 'text'].contains(s['type']) || s['x'] is! num || s['y'] is! num) continue;
     shapes.add(ShapeModel(s['type'] as String,
         Rect.fromLTWH(_num(s['x'], 0), _num(s['y'], 0), _num(s['w'], 80, 8, 800), _num(s['h'], 80, 8, 800)), _cut(s['label'], 80)));
   }

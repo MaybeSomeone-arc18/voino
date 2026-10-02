@@ -741,6 +741,21 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
           mainAxisSize: MainAxisSize.min,
           children: [
             Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                TextButton(
+                  style: link,
+                  onPressed: clearAll,
+                  child: const Text('Clear'),
+                ),
+                TextButton(
+                  style: link,
+                  onPressed: board.isEmpty ? null : () => setState(() => view = 'board'),
+                  child: const Text('Go to board'),
+                ),
+              ],
+            ),
+            Row(
               children: [
                 Expanded(
                   child: OutlinedButton(
@@ -772,16 +787,8 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                 ),
               ],
             ),
-            const SizedBox(height: 4),
-            Row(
-              children: [
-                TextButton(
-                  style: link,
-                  onPressed: clearAll,
-                  child: const Text('Clear'),
-                ),
-                Expanded(
-                  child: Text(
+            const SizedBox(height: 10),
+            Text(
               draft.error.isNotEmpty
                   ? draft.error
                   : !draft.ready
@@ -793,14 +800,6 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                   : 'One draft saves here · No cloud backup',
               textAlign: TextAlign.center,
               style: const TextStyle(fontSize: 11, color: Colors.black54),
-            ),
-                ),
-                TextButton(
-                  style: link,
-                  onPressed: board.isEmpty ? null : () => setState(() => view = 'board'),
-                  child: const Text('Board'),
-                ),
-              ],
             ),
           ],
         ),

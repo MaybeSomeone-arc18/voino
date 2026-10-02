@@ -5,7 +5,9 @@
 // sends transcript text to a third party), an on-device model can be added later.
 
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:http/http.dart' as http;
+import 'classifier_data.dart';
 import 'logic.dart';
 
 enum SentenceKind { action, decision, question, background }
@@ -113,4 +115,98 @@ class HostedGemmaClassifier implements SentenceClassifier {
       return null;
     }
   }
+}
+
+/// Tiny on-device provider: multinomial Naive Bayes over word and character n-gram
+/// features, trained at startup from [kTrainingSentences] (about a hundred sentences, <10 ms).
+/// Classifying a sentence takes microseconds, so it can run on every finalized chunk.
+class NaiveBayesClassifier implements SentenceClassifier {
+  NaiveBayesClassifier([List<List<String>>? data]) {
+    for (final row in data ?? kTrainingSentences) {
+      final k = SentenceKind.values.firstWhere((e) => e.name == row[0]);
+      _docs[k] = (_docs[k] ?? 0) + 1;
+      _total++;
+      for (final f in _features(row[1])) {
+        final m = _counts.putIfAbsent(k, () => {});
+        m[f] = (m[f] ?? 0) + 1;
+        _sums[k] = (_sums[k] ?? 0) + 1;
+        _vocab.add(f);
+      }
+    }
+  }
+  final _docs = <SentenceKind, int>{};
+  final _counts = <SentenceKind, Map<String, int>>{};
+  final _sums = <SentenceKind, int>{};
+  final _vocab = <String>{};
+  int _total = 0;
+
+  @override
+  String get name => 'naive-bayes';
+  @override
+  bool get sendsTextOffDevice => false;
+
+  static List<String> _features(String s) {
+    final t = cleanSpeech(s).toLowerCase();
+    final words = RegExp(r"[a-z0-9\u0900-\u097F']+").allMatches(t).map((m) => m.group(0)!).toList();
+    final f = <String>[];
+    for (var i = 0; i < words.length; i++) {
+      f.add('w:${words[i]}');
+      if (i + 1 < words.length) f.add('b:${words[i]}_${words[i + 1]}');
+      final w = '<${words[i]}>';
+      for (var n = 3; n <= 4; n++) {
+        for (var j = 0; j + n <= w.length; j++) {
+          f.add('c:${w.substring(j, j + n)}');
+        }
+      }
+    }
+    if (t.endsWith('?')) f.add('q:mark');
+    if (words.isNotEmpty) f.add('first:${words.first}');
+    if (words.length >= 2) f.add('last:${words.last}');
+    return f;
+  }
+
+  Tagged classifyOne(String s) {
+    final f = _features(s);
+    SentenceKind? best;
+    var bestScore = double.negativeInfinity;
+    final scores = <SentenceKind, double>{};
+    for (final k in SentenceKind.values) {
+      var sc = math.log((_docs[k] ?? 0) + 1) - math.log(_total + SentenceKind.values.length);
+      final c = _counts[k] ?? const {};
+      final denom = (_sums[k] ?? 0) + _vocab.length + 1;
+      for (final x in f) {
+        sc += math.log((c[x] ?? 0) + 1) - math.log(denom);
+      }
+      scores[k] = sc;
+      if (sc > bestScore) {
+        bestScore = sc;
+        best = k;
+      }
+    }
+    // Softmax over the log-scores gives a rough confidence.
+    var z = 0.0;
+    for (final v in scores.values) {
+      z += math.exp(v - bestScore);
+    }
+    return Tagged(cleanSpeech(s), best!, 1 / z);
+  }
+
+  @override
+  Future<List<Tagged>> classify(List<String> sentences) async => sentences.map(classifyOne).toList();
+}
+
+/// Rules first for strong cues (question mark, explicit action phrase), Naive Bayes otherwise.
+class HybridClassifier implements SentenceClassifier {
+  HybridClassifier([NaiveBayesClassifier? nb]) : _nb = nb ?? NaiveBayesClassifier();
+  final NaiveBayesClassifier _nb;
+  @override
+  String get name => 'hybrid';
+  @override
+  bool get sendsTextOffDevice => false;
+
+  @override
+  Future<List<Tagged>> classify(List<String> sentences) async => sentences.map((s) {
+        final r = RuleClassifier.classifyOne(s);
+        return r.kind == SentenceKind.background ? _nb.classifyOne(s) : r;
+      }).toList();
 }

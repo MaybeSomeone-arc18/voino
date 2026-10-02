@@ -981,7 +981,7 @@ class _BoardPanelState extends State<BoardPanel> {
         cardSize.width - 22,
         cardSize.height - 22,
       );
-      fill = cardColors[o.color] ?? Colors.white;
+      fill = _paper;
       style = TextStyle(
         fontFamily: hand,
         fontSize: o.type == 'title' ? 22 : 21,
@@ -1161,8 +1161,9 @@ class _CardPainter extends CustomPainter {
       Rect.fromLTWH(3, 3, size.width - 10, size.height - 10),
       const Radius.circular(14),
     );
-    final fill = cardColors[k.color] ?? cardColors['mint']!;
-    // Soft shadow instead of a hard offset, a thin edge in a darker tint of the card colour.
+    // Flat paper card with a thin edge: gold for sand and rose cards, ink for the rest.
+    const fill = _paper;
+    final edge = (k.color == 'sand' || k.color == 'rose') ? _gold : _ink.withValues(alpha: .55);
     canvas.drawRRect(
       rr.shift(const Offset(0, 2)),
       Paint()
@@ -1175,7 +1176,7 @@ class _CardPainter extends CustomPainter {
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.4
-        ..color = Color.lerp(fill, _ink, .38)!,
+        ..color = edge,
     );
     if (selected || from) {
       canvas.drawRRect(

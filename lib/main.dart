@@ -783,7 +783,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                     ? 'Saving on this device...'
                     : 'One draft saves here · No cloud backup',
                 textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 11, color: Colors.black54),
+                style: const TextStyle(fontSize: 12, color: AppColors.muted),
               ),
             ],
           ),
@@ -834,11 +834,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                 child: Text(
                   'Turn conversations\ninto clarity.',
                   textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 30,
-                    height: 1.25,
-                    fontWeight: FontWeight.w300,
-                    color: ink,
+                  style: Theme.of(context).textTheme.displaySmall?.copyWith(
                     shadows: [
                       for (var k = 0; k < 3; k++)
                         Shadow(color: paper, blurRadius: 14),
@@ -935,8 +931,9 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                     ? 'Start listening'
                     : 'Continue listening',
                 style: const TextStyle(
-                  fontSize: 12,
-                  letterSpacing: 1.2,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  letterSpacing: 0.3,
                   color: ink,
                 ),
               ),
@@ -948,7 +945,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                     onPressed: () => setState(() => view = 'notes'),
                     child: const Text(
                       'Type instead',
-                      style: TextStyle(fontSize: 12, color: Colors.black54),
+                      style: const TextStyle(fontSize: 14, color: AppColors.muted),
                     ),
                   ),
                   if (transcript.text.trim().isNotEmpty) ...[
@@ -956,14 +953,14 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                       onPressed: busy ? null : generate,
                       child: const Text(
                         'Done',
-                        style: TextStyle(fontSize: 12, color: Colors.black54),
+                        style: const TextStyle(fontSize: 14, color: AppColors.muted),
                       ),
                     ),
                     TextButton(
                       onPressed: clearAll,
                       child: const Text(
                         'Clear',
-                        style: TextStyle(fontSize: 12, color: Colors.black54),
+                        style: const TextStyle(fontSize: 14, color: AppColors.muted),
                       ),
                     ),
                   ],

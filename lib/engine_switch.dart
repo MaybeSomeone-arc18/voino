@@ -78,7 +78,10 @@ class _EngineSwitchState extends State<EngineSwitch> with SingleTickerProviderSt
                 child: Icon(icon, size: 15, color: selected ? paper : ink.withValues(alpha: optionEnabled ? 0.75 : 0.3)),
               ),
               const SizedBox(width: 6),
-              AnimatedDefaultTextStyle(
+              Flexible(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: AnimatedDefaultTextStyle(
                 duration: const Duration(milliseconds: 250),
                 style: TextStyle(
                   fontSize: 12,
@@ -86,6 +89,8 @@ class _EngineSwitchState extends State<EngineSwitch> with SingleTickerProviderSt
                   color: selected ? paper : ink.withValues(alpha: optionEnabled ? 0.75 : 0.3),
                 ),
                 child: Text(label),
+              ),
+                ),
               ),
             ],
           ),

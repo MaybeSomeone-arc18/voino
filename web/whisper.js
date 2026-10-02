@@ -18,8 +18,9 @@ let variant = (() => { try { const v = localStorage.getItem('voinoAsr'); return 
 const asrPromises = {};
 const RATE = 16000;
 const STEP_MS = 700; // how often a partial update is attempted (skipped while a decode is running)
-const PAUSE_MS = 600; // silence that ends a segment
-const MAX_SEG_S = 12; // force-commit long monologues
+const PAUSE_MS = 500; // silence that ends a segment
+const MAX_SEG_S = 8; // long monologues are split at the quietest point instead of growing
+const PRE_ROLL = 3; // frames (about 0.4 s) kept from before speech starts so first syllables survive
 const MIN_SECONDS = 0.5;
 const SILENCE_RMS = 0.004;
 const BUFFER = 2048; // 128 ms frames at 16 kHz
@@ -29,8 +30,11 @@ const supported = !!(navigator.mediaDevices?.getUserMedia && (window.AudioContex
 let TensorCls = null;
 let stream = null, audioCtx = null, source = null, proc = null, timer = null;
 let running = false, busy = false;
-let seg = []; // Float32Array frames of the open segment
+let seg = []; // frames {d: Float32Array, rms, sp} of the open segment (speech started, not yet committed)
+let pre = []; // recent frames while idle
+let inSeg = false;
 let segSamples = 0, speechSamples = 0, lastSpeechAt = 0, lastPartial = '';
+let vocab = (() => { try { return JSON.parse(localStorage.getItem('voinoVocab') || '[]'); } catch (_) { return []; } })();
 
 const HALLUCINATIONS = /^(?:thanks for watching|thank you\.?|you|bye\.?|\.+)$/i;
 
@@ -116,15 +120,22 @@ async function loadModel(onProgress) {
   return asrPromises[variant];
 }
 
-function joined() {
-  const out = new Float32Array(segSamples);
+function joined(frames) {
+  let n = 0;
+  for (const f of frames) n += f.d.length;
+  const out = new Float32Array(n);
   let o = 0;
-  for (const f of seg) { out.set(f, o); o += f.length; }
+  for (const f of frames) { out.set(f.d, o); o += f.d.length; }
   return out;
 }
 
 function resetSegment() {
-  seg = []; segSamples = 0; speechSamples = 0; lastPartial = '';
+  seg = []; pre = []; inSeg = false; segSamples = 0; speechSamples = 0; lastPartial = '';
+}
+
+function recount() {
+  segSamples = 0; speechSamples = 0;
+  for (const f of seg) { segSamples += f.d.length; if (f.sp) speechSamples += f.d.length; }
 }
 
 // Every decode is recorded here (window.voinoLog) and shown in the ASR debug panel.
@@ -136,11 +147,13 @@ async function decode(asr, samples, isFinal) {
   const v = VARIANTS[variant];
   const t0 = performance.now();
   const lang = v.lang;
-  const opts = { task: 'transcribe' };
+  const opts = { task: 'transcribe', max_new_tokens: Math.ceil((samples.length / RATE) * 9) + 12 };
   if (lang) opts.language = lang;
   const out = await asr(samples, opts);
   const raw = (out?.text || '').trim();
-  const text = window.voinoRomanize ? window.voinoRomanize(raw) : raw;
+  let text = window.voinoRomanize ? window.voinoRomanize(raw) : raw;
+  const AT = window.voinoAsrText;
+  if (AT) { text = AT.collapseRepeats(text); text = AT.applyVocabulary(text, vocab); }
   const halluc = HALLUCINATIONS.test(text);
   let rms = 0;
   for (let i = 0; i < samples.length; i++) rms += samples[i] * samples[i];
@@ -155,28 +168,49 @@ async function decode(asr, samples, isFinal) {
   return halluc ? '' : text;
 }
 
+// Index of the quietest frame in the second half of the open segment: a safe place to cut a long monologue.
+function quietestSplit() {
+  const lo = Math.max(2, Math.floor(seg.length / 2));
+  const hi = seg.length - 2;
+  let best = -1, bestRms = Infinity;
+  for (let i = lo; i <= hi; i++) if (seg[i].rms < bestRms) { bestRms = seg[i].rms; best = i; }
+  return best;
+}
+
 async function tick(asr, cb, force = false) {
-  if (busy) return;
-  if (speechSamples < RATE * MIN_SECONDS) {
-    if (!speechSamples && segSamples > RATE * 2) resetSegment(); // long silence, drop it
+  if (busy || !inSeg) return;
+  if (speechSamples < RATE * MIN_SECONDS && !force) {
+    if (performance.now() - lastSpeechAt > 1500) resetSegment(); // a click or cough, not speech
     return;
   }
+  if (!speechSamples) { resetSegment(); return; }
   const paused = performance.now() - lastSpeechAt > PAUSE_MS;
-  const isFinal = force || paused || segSamples > RATE * MAX_SEG_S;
+  const tooLong = segSamples > RATE * MAX_SEG_S;
+  const isFinal = force || paused || tooLong;
+  // Frames to decode: all of them, minus trailing silence on a pause; up to the quietest frame on a forced split.
+  let take = seg.length;
+  if (paused || force) {
+    let last = seg.length - 1;
+    while (last > 0 && !seg[last].sp) last--;
+    take = Math.min(seg.length, last + 3);
+  } else if (tooLong) {
+    const q = quietestSplit();
+    if (q > 0) take = q;
+  }
+  const frames = seg.slice(0, take);
   busy = true;
-  const samples = joined();
-  const taken = segSamples;
   try {
     const t0 = performance.now();
-    const text = await decode(asr, samples, isFinal);
+    const text = await decode(asr, joined(frames), isFinal);
     const ms = Math.round(performance.now() - t0);
-    cb.onStats?.(ms, taken / RATE, isFinal);
-    if (window.voinoDebug) console.debug('voino asr', { ms, audioSeconds: +(taken / RATE).toFixed(1), isFinal });
+    cb.onStats?.(ms, frames.length * BUFFER / RATE, isFinal);
     if (isFinal) {
-      // Keep audio that arrived while decoding; drop only what was transcribed.
-      let drop = taken, kept = [];
-      for (const f of seg) { if (drop >= f.length) drop -= f.length; else kept.push(f); }
-      seg = kept; segSamples = seg.reduce((a, f) => a + f.length, 0); speechSamples = 0; lastPartial = '';
+      // Keep frames that arrived while decoding; drop only what was transcribed.
+      seg = seg.slice(take);
+      recount();
+      lastPartial = '';
+      inSeg = seg.some((f) => f.sp);
+      if (!inSeg) { seg = []; segSamples = 0; speechSamples = 0; }
       cb.onPartial?.('');
       if (text) cb.onText(text);
     } else if (text && text !== lastPartial) {
@@ -206,8 +240,16 @@ async function start(onText, onProgress, onError, onPartial, onStats) {
     if (!running) return;
     let sum = 0;
     for (let i = 0; i < data.length; i++) sum += data[i] * data[i];
-    if (Math.sqrt(sum / data.length) >= SILENCE_RMS) { lastSpeechAt = performance.now(); speechSamples += data.length; }
-    seg.push(data); segSamples += data.length;
+    const rms = Math.sqrt(sum / data.length);
+    const sp = rms >= SILENCE_RMS;
+    const fr = { d: data, rms, sp };
+    if (sp) lastSpeechAt = performance.now();
+    if (!inSeg) {
+      if (sp) { inSeg = true; seg = pre.concat([fr]); pre = []; recount(); }
+      else { pre.push(fr); if (pre.length > PRE_ROLL) pre.shift(); }
+    } else {
+      seg.push(fr); segSamples += data.length; if (sp) speechSamples += data.length;
+    }
     capture.samples += data.length;
     if (capture.keep) capture.keep.push(data);
   };
@@ -286,7 +328,12 @@ function debugPanel() {
   note.textContent = 'Hinglish tiny has no stated license: test only. Switch model while not listening.';
   note.style.opacity = '.7';
   const rows = document.createElement('div');
-  box.append(sel, note, status, rows);
+  const vin = document.createElement('input');
+  vin.placeholder = 'Your words (names, terms), comma separated';
+  vin.value = vocab.join(', ');
+  vin.style.cssText = 'width:100%;box-sizing:border-box;margin-top:4px';
+  vin.onchange = () => setVocabulary(vin.value.split(',').map((w) => w.trim()).filter(Boolean));
+  box.append(sel, note, status, vin, rows);
   btn.onclick = () => { box.style.display = box.style.display === 'none' ? 'block' : 'none'; };
   onLog = (e) => {
     const d = document.createElement('div');
@@ -299,4 +346,9 @@ function debugPanel() {
 }
 if (typeof document !== 'undefined') { if (document.body) debugPanel(); else window.addEventListener('DOMContentLoaded', debugPanel); }
 
-window.voinoWhisper = { supported, start, stop, setVariant, variants: () => Object.keys(VARIANTS) };
+function setVocabulary(words) {
+  vocab = (words || []).map(String);
+  try { localStorage.setItem('voinoVocab', JSON.stringify(vocab)); } catch (_) {}
+}
+
+window.voinoWhisper = { supported, start, stop, setVariant, setVocabulary, vocabulary: () => vocab.slice(), variants: () => Object.keys(VARIANTS) };

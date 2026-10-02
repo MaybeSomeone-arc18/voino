@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'board.dart';
 import 'board_controller.dart';
+import 'board_glass.dart';
 import 'rough.dart';
 
 const _ink = Color(0xFF2B2A28),
@@ -89,22 +90,27 @@ class _BoardPanelState extends State<BoardPanel> {
     if (mounted) setState(() {});
   }
 
+  // Room above and below the content, so the floating bars never have to cover it.
+  static const _padTop = 72.0, _padBottom = 96.0, _padSide = 12.0;
+
   void _fit() {
     if (_viewport.isEmpty) return;
     final b = c.bounds;
     final s = math
-        .min(_viewport.width / b.width, _viewport.height / b.height)
+        .min(
+          (_viewport.width - 2 * _padSide) / b.width,
+          (_viewport.height - _padTop - _padBottom) / b.height,
+        )
         .clamp(0.25, 1.0);
-    // Anchor to the canvas origin: centering would show empty space outside the canvas, where nothing can be drawn.
     _tc.value = Matrix4.diagonal3Values(s, s, 1)
-      ..setTranslationRaw(-b.left * s, -b.top * s, 0);
+      ..setTranslationRaw(_padSide - b.left * s, _padTop - b.top * s, 0);
   }
 
   String _hint() => switch (c.tool) {
     Tool.select =>
       _mobile
           ? 'Tap to select. Double-tap to edit. Move pans; pinch to zoom.'
-          : 'Drag cards and shapes to move them. Double-tap to edit. Drag empty space to pan, pinch or scroll to zoom.',
+          : 'Drag cards to move them. Double-click to edit. Drag empty space to pan. Keys: V select, N note, R box, O circle, A arrow, Esc back.',
     Tool.box => 'Drag on empty space to draw a box.',
     Tool.circle => 'Drag on empty space to draw a circle.',
     Tool.arrow =>
@@ -113,33 +119,11 @@ class _BoardPanelState extends State<BoardPanel> {
           : 'Now tap the card the arrow should point to.',
   };
 
-  Widget _pill(
-    String label,
-    VoidCallback? f, {
-    bool on = false,
-  }) => OutlinedButton(
-    onPressed: f,
-    style: OutlinedButton.styleFrom(
-      foregroundColor: _ink,
-      backgroundColor: on ? _gold.withValues(alpha: .28) : Colors.white,
-      side: const BorderSide(color: _ink, width: 1.4),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      textStyle: TextStyle(
-        fontFamily: hand,
-        fontSize: _mobile ? 17 : 19,
-        fontWeight: FontWeight.w700,
-      ),
-      padding: EdgeInsets.symmetric(horizontal: _mobile ? 6 : 14, vertical: 6),
-    ),
-    child: Text(label),
-  );
-
-  @override
   Widget build(BuildContext context) {
     final drawTool = c.tool == Tool.box || c.tool == Tool.circle;
     final height = math.max(
-      420.0,
-      math.min(720.0, MediaQuery.of(context).size.height * .62),
+      460.0,
+      math.min(720.0, MediaQuery.of(context).size.height * .66),
     );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -164,66 +148,16 @@ class _BoardPanelState extends State<BoardPanel> {
             height: 1.1,
           ),
         ),
-        const SizedBox(height: 10),
-        if (_mobile)
-          _mobileTools()
-        else
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _pill('+ Add a note', () {
-                final at = _viewport.isEmpty
-                    ? const Offset(60, 60)
-                    : _tc.toScene(_viewport.center(Offset.zero));
-                c.addCard(at - Offset(cardSize.width / 2, cardSize.height / 2));
-              }),
-              _pill(
-                c.tool == Tool.arrow
-                    ? (c.arrowFrom == null
-                          ? 'Tap first card'
-                          : 'Tap second card')
-                    : 'Connect two cards',
-                () => c.setTool(Tool.arrow),
-                on: c.tool == Tool.arrow,
-              ),
-              _pill(
-                'Draw circle',
-                () => c.setTool(Tool.circle),
-                on: c.tool == Tool.circle,
-              ),
-              _pill(
-                'Draw box',
-                () => c.setTool(Tool.box),
-                on: c.tool == Tool.box,
-              ),
-              _pill('Edit text', c.selected == null ? null : _editSelected),
-              _pill(
-                'Delete selected',
-                c.selected == null ? null : c.deleteSelected,
-              ),
-              _pill('Undo', c.canUndo ? c.undo : null),
-              _pill('Fit view', _fit),
-              _pill('Save board .json', widget.onSave),
-              _pill('Open board file', widget.onOpen),
-            ],
-          ),
         const SizedBox(height: 12),
         Container(
           height: height,
           decoration: BoxDecoration(
-            color: _paper,
-            border: Border.all(color: _ink, width: 1.6),
-            borderRadius: BorderRadius.circular(14),
-            boxShadow: [
-              BoxShadow(
-                color: _ink.withValues(alpha: .16),
-                offset: const Offset(4, 4),
-              ),
-            ],
+            color: Colors.white,
+            border: Border.all(color: _ink.withValues(alpha: .2), width: 1),
+            borderRadius: BorderRadius.circular(16),
           ),
           child: ClipRRect(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(15),
             child: LayoutBuilder(
               builder: (ctx, cons) {
                 _viewport = Size(cons.maxWidth, cons.maxHeight);
@@ -233,7 +167,27 @@ class _BoardPanelState extends State<BoardPanel> {
                     if (mounted) _fit();
                   });
                 }
-                return _canvas(drawTool);
+                return Stack(
+                  children: [
+                    Positioned.fill(child: _canvas(drawTool)),
+                    Positioned(top: 10, right: 10, child: _viewBar()),
+                    Positioned(
+                      left: 10,
+                      right: 10,
+                      bottom: 12,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (c.selected != null) ...[
+                            _selectionBar(),
+                            const SizedBox(height: 8),
+                          ],
+                          _mobile ? _mobileTools() : _toolBar(),
+                        ],
+                      ),
+                    ),
+                  ],
+                );
               },
             ),
           ),
@@ -241,6 +195,117 @@ class _BoardPanelState extends State<BoardPanel> {
       ],
     );
   }
+
+  /// Top-right cluster: undo, redo, zoom, and (on larger screens) fit and file actions.
+  Widget _viewBar() => BoardBar(
+    radius: 14,
+    padding: const EdgeInsets.all(4),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        BoardButton(
+          icon: Icons.undo,
+          tooltip: 'Undo',
+          onPressed: c.canUndo ? c.undo : null,
+        ),
+        BoardButton(
+          icon: Icons.redo,
+          tooltip: 'Redo',
+          onPressed: c.canRedo ? c.redo : null,
+        ),
+        if (!_mobile) ...[
+          BoardButton(
+            icon: Icons.remove,
+            tooltip: 'Zoom out',
+            onPressed: () => _zoom(1 / 1.35),
+          ),
+          BoardButton(
+            icon: Icons.add,
+            tooltip: 'Zoom in',
+            onPressed: () => _zoom(1.35),
+          ),
+          BoardButton(
+            icon: Icons.fit_screen,
+            tooltip: 'Fit view',
+            onPressed: _fit,
+          ),
+          BoardButton(
+            icon: Icons.download,
+            tooltip: 'Save board .json',
+            onPressed: widget.onSave,
+          ),
+          BoardButton(
+            icon: Icons.folder_open,
+            tooltip: 'Open board file',
+            onPressed: widget.onOpen,
+          ),
+        ],
+      ],
+    ),
+  );
+
+  /// Appears only while something is selected, like Excalidraw's properties panel.
+  Widget _selectionBar() {
+    final sel = c.selected;
+    return BoardBar(
+      radius: 14,
+      padding: const EdgeInsets.all(4),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          BoardButton(
+            label: _mobile ? 'Edit' : 'Edit text',
+            onPressed: _editSelected,
+          ),
+          if (sel is CardModel || sel is ShapeModel)
+            BoardButton(
+              icon: Icons.copy_all_outlined,
+              tooltip: 'Duplicate',
+              onPressed: c.duplicateSelected,
+            ),
+          BoardButton(
+            label: _mobile ? 'Delete' : 'Delete selected',
+            onPressed: c.deleteSelected,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _toolBar() => BoardBar(
+    child: SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          BoardButton(label: '+ Add a note', onPressed: _addNote),
+          const SizedBox(width: 6),
+          BoardButton(
+            label: c.tool == Tool.arrow
+                ? (c.arrowFrom == null ? 'Tap first card' : 'Tap second card')
+                : 'Connect two cards',
+            tooltip: 'Connect (A)',
+            onPressed: () => c.setTool(Tool.arrow),
+            on: c.tool == Tool.arrow,
+          ),
+          const SizedBox(width: 6),
+          BoardButton(
+            label: 'Draw circle',
+            tooltip: 'Circle (O)',
+            onPressed: () => c.setTool(Tool.circle),
+            on: c.tool == Tool.circle,
+          ),
+          const SizedBox(width: 6),
+          BoardButton(
+            label: 'Draw box',
+            tooltip: 'Box (R)',
+            onPressed: () => c.setTool(Tool.box),
+            on: c.tool == Tool.box,
+          ),
+        ],
+      ),
+    ),
+  );
 
   void _addNote() {
     final at = _viewport.isEmpty
@@ -273,105 +338,107 @@ class _BoardPanelState extends State<BoardPanel> {
       );
   }
 
-  Widget _mobileTools() => Column(
-    children: [
-      Row(
-        children: [
-          Expanded(
-            child: _pill('Select', () {
+  Widget _mobileTools() => BoardBar(
+    padding: const EdgeInsets.all(5),
+    child: Row(
+      children: [
+        Expanded(
+          child: BoardButton(
+            label: 'Select',
+            onPressed: () {
               setState(() => _panMode = false);
               if (c.tool != Tool.select) c.setTool(Tool.select);
-            }, on: !_panMode && c.tool == Tool.select),
+            },
+            on: !_panMode && c.tool == Tool.select,
           ),
-          const SizedBox(width: 6),
-          Expanded(
-            child: _pill('Move', () {
+        ),
+        const SizedBox(width: 4),
+        Expanded(
+          child: BoardButton(
+            label: 'Move',
+            onPressed: () {
               if (c.tool != Tool.select) c.setTool(Tool.select);
               c.select(null);
               setState(() => _panMode = true);
-            }, on: _panMode),
+            },
+            on: _panMode,
           ),
-          const SizedBox(width: 6),
-          Expanded(child: _pill('+ Note', _addNote)),
-          IconButton(
-            tooltip: 'More board tools',
-            onPressed: _moreTools,
-            icon: const Icon(Icons.more_horiz),
-          ),
-        ],
-      ),
-      Wrap(
-        alignment: WrapAlignment.end,
-        spacing: 6,
-        children: [
-          if (c.selected != null) ...[
-            _pill('Edit', _editSelected),
-
-            _pill('Delete', c.deleteSelected),
-          ],
-
-          IconButton(
-            tooltip: 'Zoom out',
-            onPressed: () => _zoom(1 / 1.35),
-            icon: const Icon(Icons.remove),
-          ),
-          IconButton(
-            tooltip: 'Zoom in',
-            onPressed: () => _zoom(1.35),
-            icon: const Icon(Icons.add),
-          ),
-          IconButton(
-            tooltip: 'Undo',
-            onPressed: c.canUndo ? c.undo : null,
-            icon: const Icon(Icons.undo),
-          ),
-        ],
-      ),
-    ],
+        ),
+        const SizedBox(width: 4),
+        Expanded(
+          child: BoardButton(label: '+ Note', onPressed: _addNote),
+        ),
+        const SizedBox(width: 4),
+        BoardButton(
+          icon: Icons.more_horiz,
+          tooltip: 'More board tools',
+          onPressed: _moreTools,
+        ),
+      ],
+    ),
   );
 
   void _moreTools() {
     showModalBottomSheet<void>(
       context: context,
-      backgroundColor: _paper,
+      backgroundColor: Colors.white,
+      showDragHandle: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
       builder: (sheetContext) => SafeArea(
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Padding(
-                padding: EdgeInsets.all(16),
-                child: Text(
-                  'Board tools',
-                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
-                ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+          child: Material(
+            color: Colors.white,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.fromLTRB(16, 10, 16, 8),
+                    child: Text(
+                      'Board tools',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                        color: _ink,
+                      ),
+                    ),
+                  ),
+                  for (final item in <(String, IconData, VoidCallback)>[
+                    (
+                      'Connect cards',
+                      Icons.arrow_forward,
+                      () => c.setTool(Tool.arrow),
+                    ),
+                    (
+                      'Draw circle',
+                      Icons.circle_outlined,
+                      () => c.setTool(Tool.circle),
+                    ),
+                    ('Draw box', Icons.crop_square, () => c.setTool(Tool.box)),
+                    ('Fit view', Icons.fit_screen, _fit),
+                    ('Zoom in', Icons.zoom_in, () => _zoom(1.35)),
+                    ('Zoom out', Icons.zoom_out, () => _zoom(1 / 1.35)),
+                    ('Save board .json', Icons.download, widget.onSave),
+                    ('Open board file', Icons.folder_open, widget.onOpen),
+                  ])
+                    ListTile(
+                      leading: Icon(item.$2, color: _ink),
+                      title: Text(
+                        item.$1,
+                        style: const TextStyle(color: _ink, fontSize: 16),
+                      ),
+                      onTap: () {
+                        Navigator.pop(sheetContext);
+                        setState(() => _panMode = false);
+                        item.$3();
+                      },
+                    ),
+                ],
               ),
-              for (final item in <(String, IconData, VoidCallback)>[
-                (
-                  'Connect cards',
-                  Icons.arrow_forward,
-                  () => c.setTool(Tool.arrow),
-                ),
-                (
-                  'Draw circle',
-                  Icons.circle_outlined,
-                  () => c.setTool(Tool.circle),
-                ),
-                ('Draw box', Icons.crop_square, () => c.setTool(Tool.box)),
-                ('Fit view', Icons.fit_screen, _fit),
-                ('Save board .json', Icons.download, widget.onSave),
-                ('Open board file', Icons.folder_open, widget.onOpen),
-              ])
-                ListTile(
-                  leading: Icon(item.$2),
-                  title: Text(item.$1),
-                  onTap: () {
-                    Navigator.pop(sheetContext);
-                    setState(() => _panMode = false);
-                    item.$3();
-                  },
-                ),
-            ],
+            ),
           ),
         ),
       ),
@@ -385,9 +452,45 @@ class _BoardPanelState extends State<BoardPanel> {
     return CallbackShortcuts(
       bindings: {
         const SingleActivator(LogicalKeyboardKey.keyZ, meta: true): c.undo,
+        const SingleActivator(LogicalKeyboardKey.keyZ, control: true): c.undo,
+        const SingleActivator(LogicalKeyboardKey.keyZ, meta: true, shift: true):
+            c.redo,
+        const SingleActivator(
+          LogicalKeyboardKey.keyZ,
+          control: true,
+          shift: true,
+        ): c.redo,
+        const SingleActivator(LogicalKeyboardKey.keyY, control: true): c.redo,
+        const SingleActivator(LogicalKeyboardKey.keyD, meta: true):
+            c.duplicateSelected,
+        const SingleActivator(LogicalKeyboardKey.keyD, control: true):
+            c.duplicateSelected,
         const SingleActivator(LogicalKeyboardKey.delete): c.deleteSelected,
         const SingleActivator(LogicalKeyboardKey.backspace): c.deleteSelected,
-        const SingleActivator(LogicalKeyboardKey.keyZ, control: true): c.undo,
+        const SingleActivator(LogicalKeyboardKey.escape): () {
+          _panMode = false;
+          c.arrowFrom = null;
+          if (c.tool != Tool.select) c.setTool(Tool.select);
+          c.select(null);
+        },
+        const SingleActivator(LogicalKeyboardKey.keyV): () {
+          if (c.tool != Tool.select) c.setTool(Tool.select);
+        },
+        const SingleActivator(LogicalKeyboardKey.keyH): () =>
+            setState(() => _panMode = !_panMode),
+        const SingleActivator(LogicalKeyboardKey.keyN): _addNote,
+        const SingleActivator(LogicalKeyboardKey.keyR): () {
+          if (c.tool != Tool.box) c.setTool(Tool.box);
+        },
+        const SingleActivator(LogicalKeyboardKey.keyO): () {
+          if (c.tool != Tool.circle) c.setTool(Tool.circle);
+        },
+        const SingleActivator(LogicalKeyboardKey.keyA): () {
+          if (c.tool != Tool.arrow) c.setTool(Tool.arrow);
+        },
+        const SingleActivator(LogicalKeyboardKey.digit1, shift: true): _fit,
+        const SingleActivator(LogicalKeyboardKey.equal): () => _zoom(1.35),
+        const SingleActivator(LogicalKeyboardKey.minus): () => _zoom(1 / 1.35),
       },
       child: Focus(
         focusNode: _focus,
@@ -398,7 +501,12 @@ class _BoardPanelState extends State<BoardPanel> {
             constrained: false,
             minScale: .2,
             maxScale: 3,
-            boundaryMargin: EdgeInsets.zero,
+            boundaryMargin: const EdgeInsets.fromLTRB(
+              _padSide,
+              _padTop,
+              _padSide,
+              _padBottom,
+            ),
             panEnabled: !drawTool,
             scaleEnabled: !drawTool,
             child: SizedBox(
@@ -813,7 +921,7 @@ class _GridPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final p = Paint()
-      ..color = _ink.withValues(alpha: .14)
+      ..color = _ink.withValues(alpha: .11)
       ..strokeWidth = 2
       ..strokeCap = StrokeCap.round;
     final pts = <Offset>[
@@ -836,37 +944,31 @@ class _CardPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final rr = RRect.fromRectAndRadius(
       Rect.fromLTWH(3, 3, size.width - 10, size.height - 10),
-      const Radius.circular(8),
+      const Radius.circular(14),
     );
+    final fill = cardColors[k.color] ?? cardColors['mint']!;
+    // Soft shadow instead of a hard offset, a thin edge in a darker tint of the card colour.
     canvas.drawRRect(
-      rr.shift(const Offset(4, 4)),
-      Paint()..color = _ink.withValues(alpha: .16),
+      rr.shift(const Offset(0, 2)),
+      Paint()
+        ..color = _ink.withValues(alpha: .12)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3),
     );
+    canvas.drawRRect(rr, Paint()..color = fill);
     canvas.drawRRect(
       rr,
-      Paint()..color = cardColors[k.color] ?? cardColors['mint']!,
-    );
-    final seed = k.id.hashCode;
-    sketch(
-      canvas,
       Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 2.2
-        ..strokeCap = StrokeCap.round
-        ..color = _ink,
-      seed,
-      (r) => roughRect(rr.outerRect, r, wobble: 1.1),
+        ..strokeWidth = 1.4
+        ..color = Color.lerp(fill, _ink, .38)!,
     );
     if (selected || from) {
-      sketch(
-        canvas,
+      canvas.drawRRect(
+        rr.inflate(5),
         Paint()
           ..style = PaintingStyle.stroke
           ..strokeWidth = 2.6
           ..color = _gold,
-        seed + 7,
-        (r) => roughRect(rr.outerRect.inflate(7), r, wobble: .8),
-        dash: const [9, 6],
       );
     }
   }

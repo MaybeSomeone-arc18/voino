@@ -15,6 +15,7 @@ import 'settings.dart';
 import 'whisper_stub.dart' if (dart.library.js_interop) 'whisper_web.dart';
 import 'engine_switch.dart';
 import 'logic.dart';
+import 'glass.dart';
 import 'minimal_notes.dart';
 import 'listening_session.dart';
 import 'local_draft.dart';
@@ -721,97 +722,74 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     );
   }
 
-  Widget _notesActions() => Container(
-    decoration: const BoxDecoration(
-      color: paper,
-      border: Border(top: BorderSide(color: Color(0xFFDCD5C8))),
-    ),
-    padding: const EdgeInsets.fromLTRB(24, 14, 24, 16),
-    child: Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 720),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: ink,
-                      minimumSize: const Size(0, 47),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(7),
-                      ),
+  Widget _notesActions() => SafeArea(
+    top: false,
+    child: Container(
+      margin: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.35),
+        borderRadius: BorderRadius.circular(32),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.8)),
+      ),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 720),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: GlassButton(
+                      label: 'Copy notes',
+                      ink: ink,
+                      onPressed: () => copy(exportText(currentNote()), 'Notes'),
                     ),
-                    onPressed: () => copy(exportText(currentNote()), 'Notes'),
-                    child: const Text('Copy notes'),
                   ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: FilledButton(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: ink,
-                      foregroundColor: paper,
-                      minimumSize: const Size(0, 47),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(7),
-                      ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: GlassButton(
+                      label: busy ? 'Working...' : 'Make board',
+                      ink: ink,
+                      primary: true,
+                      onPressed: busy ? null : generate,
                     ),
-                    onPressed: busy ? null : generate,
-                    child: Text(busy ? 'Working...' : 'Make board'),
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: ink,
-                      minimumSize: const Size(0, 47),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(7),
-                      ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: GlassButton(label: 'Clear', ink: ink, onPressed: clearAll),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: GlassButton(
+                      label: 'Go to board',
+                      ink: ink,
+                      onPressed: () => setState(() => view = 'board'),
                     ),
-                    onPressed: clearAll,
-                    child: const Text('Clear'),
                   ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: OutlinedButton(
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: ink,
-                      minimumSize: const Size(0, 47),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(7),
-                      ),
-                    ),
-                    onPressed: () => setState(() => view = 'board'),
-                    child: const Text('Go to board'),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Text(
-              draft.error.isNotEmpty
-                  ? draft.error
-                  : !draft.ready
-                  ? 'Opening local draft...'
-                  : draft.saved
-                  ? 'Saved on this device · One draft'
-                  : draftTouched
-                  ? 'Saving on this device...'
-                  : 'One draft saves here · No cloud backup',
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 11, color: Colors.black54),
-            ),
-          ],
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                draft.error.isNotEmpty
+                    ? draft.error
+                    : !draft.ready
+                    ? 'Opening local draft...'
+                    : draft.saved
+                    ? 'Saved on this device · One draft'
+                    : draftTouched
+                    ? 'Saving on this device...'
+                    : 'One draft saves here · No cloud backup',
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 11, color: Colors.black54),
+              ),
+            ],
+          ),
         ),
       ),
     ),

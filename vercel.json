@@ -5,6 +5,9 @@
   "functions": {
     "api/summarize.js": {
       "maxDuration": 30
+    },
+    "api/transcribe.js": {
+      "maxDuration": 30
     }
   }
 }

@@ -50,6 +50,20 @@ ThemeData buildAppTheme() {
       titleTextStyle: serif(24, 30),
       contentTextStyle: GoogleFonts.inter(fontSize: 14, height: 20 / 14, color: ink),
     ),
+    inputDecorationTheme: InputDecorationThemeData(
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: const BorderSide(color: AppColors.muted),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: const BorderSide(color: AppColors.muted),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: const BorderSide(color: ink, width: 1.5),
+      ),
+    ),
     popupMenuTheme: PopupMenuThemeData(
       color: AppColors.paper,
       surfaceTintColor: Colors.transparent,

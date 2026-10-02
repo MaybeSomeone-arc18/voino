@@ -153,10 +153,10 @@ class _BoardPanelState extends State<BoardPanel> {
         const SizedBox(height: 4),
         Text(
           _panMode ? 'Drag anywhere to move. Pinch to zoom.' : _hint(),
-          style: const TextStyle(
+          style: TextStyle(
             fontFamily: hand,
             fontSize: 20,
-            color: Colors.black54,
+            color: _ink.withValues(alpha: .68),
             height: 1.1,
           ),
         ),
@@ -164,7 +164,7 @@ class _BoardPanelState extends State<BoardPanel> {
         Container(
           height: height,
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: _paper,
             border: Border.all(color: _ink.withValues(alpha: .2), width: 1),
             borderRadius: BorderRadius.circular(16),
           ),
@@ -411,7 +411,7 @@ class _BoardPanelState extends State<BoardPanel> {
   void _moreTools() {
     showModalBottomSheet<void>(
       context: context,
-      backgroundColor: Colors.white,
+      backgroundColor: _paper,
       showDragHandle: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
@@ -420,7 +420,7 @@ class _BoardPanelState extends State<BoardPanel> {
         child: Padding(
           padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
           child: Material(
-            color: Colors.white,
+            color: _paper,
             child: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -1089,7 +1089,7 @@ class _BoardPanelState extends State<BoardPanel> {
     showDialog<void>(
       context: context,
       builder: (d) => AlertDialog(
-        backgroundColor: Colors.white,
+        backgroundColor: _paper,
         title: const Text('Board shortcuts'),
         content: SizedBox(
           width: 360,
@@ -1275,7 +1275,7 @@ class _ShapePainter extends CustomPainter {
           width: 9,
           height: 9,
         );
-        canvas.drawRect(h, Paint()..color = Colors.white);
+        canvas.drawRect(h, Paint()..color = _paper);
         canvas.drawRect(
           h,
           Paint()

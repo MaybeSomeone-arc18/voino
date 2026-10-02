@@ -610,7 +610,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
         const SizedBox(height: 8),
         const Text(
           "Speech recognition may use the device or browser vendor's online service. Ask permission before recording other people.",
-          style: TextStyle(fontSize: 11),
+          style: TextStyle(fontSize: 12),
         ),
       ],
     );
@@ -1120,7 +1120,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                     title: const Text('Use Voino\'s hosted summarizer'),
                     subtitle: const Text(
                       'No key needed. Sends the transcript to the Voino server, which forwards it to Gemini. Rate limited; used after your own keys.',
-                      style: TextStyle(fontSize: 11),
+                      style: TextStyle(fontSize: 12),
                     ),
                     value: proxy,
                     onChanged: (v) => setD(() => proxy = v),

@@ -15,6 +15,7 @@ import 'settings.dart';
 import 'whisper_stub.dart' if (dart.library.js_interop) 'whisper_web.dart';
 import 'engine_switch.dart';
 import 'logic.dart';
+import 'app_theme.dart';
 import 'glass.dart';
 import 'minimal_notes.dart';
 import 'listening_session.dart';
@@ -31,11 +32,7 @@ class VoinoApp extends StatelessWidget {
   Widget build(BuildContext context) => MaterialApp(
     title: 'Voino',
     debugShowCheckedModeBanner: false,
-    theme: ThemeData(
-      colorSchemeSeed: const Color(0xFF3F6F5A),
-      scaffoldBackgroundColor: const Color(0xFFF4F2EC),
-      useMaterial3: true,
-    ),
+    theme: buildAppTheme(),
     home: const Home(),
   );
 }

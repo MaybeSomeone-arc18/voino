@@ -13,6 +13,7 @@ import 'board_view.dart';
 import 'gemini.dart';
 import 'settings.dart';
 import 'whisper_stub.dart' if (dart.library.js_interop) 'whisper_web.dart';
+import 'engine_switch.dart';
 import 'logic.dart';
 import 'minimal_notes.dart';
 import 'listening_session.dart';
@@ -57,6 +58,8 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
   bool speechReady = false, listening = false, busy = false;
   Settings settings = Settings();
   String engine = 'device'; // device | whisper (web only)
+  int engineSwitches = 0; // bumps the mic animation on each switch
+  bool _fellBackToLocal = false;
   String whisperPartial = ''; // live, not yet committed Whisper text
   String micNote = '';
   String view = 'listen'; // listen | notes | board
@@ -175,6 +178,20 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
         listening = deviceSession.requested;
         micNote = deviceSession.message;
       });
+      // Cloud speech is unreachable: switch to on-device Whisper and start it.
+      if (kIsWeb &&
+          WhisperEngine.supported &&
+          !_fellBackToLocal &&
+          deviceSession.message.toLowerCase().contains('network')) {
+        _fellBackToLocal = true;
+        setState(() {
+          engine = 'whisper';
+          engineSwitches++;
+          listening = false;
+          micNote = 'Cloud speech unreachable. Switched to on-device.';
+        });
+        toggleWhisper();
+      }
     }
   }
 
@@ -845,7 +862,29 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                 ),
                 const SizedBox(height: 18),
               ],
-              GestureDetector(
+              if (kIsWeb && WhisperEngine.supported) ...[
+                EngineSwitch(
+                  engine: engine,
+                  ink: ink,
+                  paper: paper,
+                  cloudEnabled: speechReady,
+                  enabled: !listening,
+                  onChanged: (v) => setState(() {
+                    engine = v;
+                    engineSwitches++;
+                    micNote = '';
+                    _fellBackToLocal = false;
+                  }),
+                ),
+                const SizedBox(height: 14),
+              ],
+              TweenAnimationBuilder<double>(
+                key: ValueKey(engineSwitches),
+                tween: Tween(begin: engineSwitches == 0 ? 1.0 : 1.2, end: 1.0),
+                duration: const Duration(milliseconds: 500),
+                curve: Curves.elasticOut,
+                builder: (context, scale, child) => Transform.scale(scale: scale, child: child),
+                child: GestureDetector(
                 onTap: canListen ? toggleListen : null,
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 250),
@@ -870,6 +909,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                     color: paper,
                     size: 34,
                   ),
+                ),
                 ),
               ),
               const SizedBox(height: 10),

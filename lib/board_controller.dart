@@ -3,7 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'board.dart';
 
-enum Tool { select, box, circle, arrow }
+enum Tool { select, box, circle, arrow, text }
 
 /// State of the editable board: elements, current tool, selection and undo history.
 class BoardController extends ChangeNotifier {
@@ -163,6 +163,21 @@ class BoardController extends ChangeNotifier {
     selected = c;
     changed();
     return c;
+  }
+
+  /// Free text on the canvas (a shape of type 'text'): no box, just words. The caller starts editing it.
+  ShapeModel addText(Offset at) {
+    checkpoint();
+    final t = ShapeModel(
+      'text',
+      Rect.fromLTWH(math.max(0, at.dx), math.max(0, at.dy), 200, 44),
+      '',
+    );
+    shapes.add(t);
+    selected = t;
+    tool = Tool.select;
+    changed();
+    return t;
   }
 
   void deleteSelected() {

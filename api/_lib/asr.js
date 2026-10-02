@@ -55,7 +55,7 @@ async function transcribe(audioB64, { key, fetchImpl = fetch, model = DEFAULT_MO
     const data = await res.json();
     if (debug) return '\u0000RAW' + JSON.stringify(data).slice(0, 900);
     const parts = data?.candidates?.[0]?.content?.parts || [];
-    return parts.map((p) => p.text || '').join('').trim();
+    return parts.map((p) => p.text || p.audioTranscription?.text || '').join(' ').trim();
   } catch {
     throw new HttpError(502, 'bad_model_output');
   }

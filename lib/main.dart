@@ -658,7 +658,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
             Positioned.fill(
               child: ColoredBox(
                 color: view == 'board'
-                    ? Colors.white
+                    ? paper
                     : paper.withValues(alpha: 0.86),
               ),
             ),

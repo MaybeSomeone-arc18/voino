@@ -4,7 +4,9 @@
 const { createRateLimiter } = require('./core');
 
 const MAX_BODY_BYTES = 1.5 * 1024 * 1024; // about 40 s of 16 kHz mono 16-bit audio as base64
-const DEFAULT_MODEL = 'gemini-2.5-flash';
+const DEFAULT_MODEL = 'gemini-3.5-flash-lite';
+// Used when the default model is rate limited, unavailable or rejected (not when a request names a model).
+const FALLBACK_MODEL = 'gemini-2.5-flash';
 // Models a request may ask for by name (for side-by-side tests); anything else uses the env/default model.
 const ALLOWED_MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.8-flash', 'gemini-3.5-transcribe'];
 const ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models';
@@ -89,7 +91,16 @@ function makeHandler({ env = process.env, fetchImpl = fetch, limiter = createRat
     if (typeof audio !== 'string' || !/^[A-Za-z0-9+/=]+$/.test(audio) || audio.length < 100) return res.status(400).json({ error: 'invalid_audio' });
     if (audio.length > MAX_BODY_BYTES) return res.status(413).json({ error: 'too_long' });
     try {
-      const text = await transcribe(audio, { key, fetchImpl, model: ALLOWED_MODELS.includes(body.model) ? body.model : (env.GEMINI_ASR_MODEL || DEFAULT_MODEL), vocab: Array.isArray(body.vocab) ? body.vocab : [], debug: body.debug === true });
+      const explicit = ALLOWED_MODELS.includes(body.model);
+      const model = explicit ? body.model : (env.GEMINI_ASR_MODEL || DEFAULT_MODEL);
+      const opts = { key, fetchImpl, vocab: Array.isArray(body.vocab) ? body.vocab : [], debug: body.debug === true };
+      let text;
+      try {
+        text = await transcribe(audio, { ...opts, model });
+      } catch (e) {
+        if (explicit || model === FALLBACK_MODEL || ![429, 502, 503].includes(e.status)) throw e;
+        text = await transcribe(audio, { ...opts, model: FALLBACK_MODEL });
+      }
       if (text.startsWith('\u0000RAW')) return res.status(200).json({ raw: text.slice(4) });
       return res.status(200).json({ text });
     } catch (e) {

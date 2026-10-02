@@ -10,5 +10,7 @@ class WhisperEngine {
   }) async =>
       throw UnsupportedError('Whisper is only available on web.');
 
+  static void useCloud(bool on) {}
+
   static Future<void> stop() async {}
 }

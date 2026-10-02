@@ -67,6 +67,12 @@ class _BoardPanelState extends State<BoardPanel> {
   ShapeModel? _live;
   Offset? _dragStart;
   bool _panMode = false;
+  Object?
+  _editing; // CardModel | ShapeModel | Link whose text is being typed in place
+  bool _editIsNew = false;
+  final _etc = TextEditingController();
+  final _efocus = FocusNode();
+  Offset _dblAt = Offset.zero;
   bool get _mobile => MediaQuery.sizeOf(context).width < 600;
 
   BoardController get c => widget.controller;
@@ -83,11 +89,16 @@ class _BoardPanelState extends State<BoardPanel> {
     c.removeListener(_onChange);
     _tc.dispose();
     _focus.dispose();
+    _etc.dispose();
+    _efocus.dispose();
     super.dispose();
   }
 
   void _onChange() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    // Selecting something else, switching tool or undoing ends the edit and keeps the text.
+    if (_editing != null && !identical(c.selected, _editing)) _commitEdit();
+    setState(() {});
   }
 
   // Room above and below the content, so the floating bars never have to cover it.
@@ -109,10 +120,11 @@ class _BoardPanelState extends State<BoardPanel> {
   String _hint() => switch (c.tool) {
     Tool.select =>
       _mobile
-          ? 'Tap to select. Double-tap to edit. Move pans; pinch to zoom.'
-          : 'Drag cards to move them. Double-click to edit. Drag empty space to pan. Keys: V select, N note, R box, O circle, A arrow, Esc back.',
+          ? 'Tap to select. Double-tap to write. Move pans; pinch to zoom.'
+          : 'Drag cards to move them. Double-click to edit. Drag empty space to pan. Double-click anything to write in it. Keys: T text, V select, N note, R box, O circle, A arrow, ? for all.',
     Tool.box => 'Drag on empty space to draw a box.',
     Tool.circle => 'Drag on empty space to draw a circle.',
+    Tool.text => 'Tap anywhere to write.',
     Tool.arrow =>
       c.arrowFrom == null
           ? 'Tap the first card.'
@@ -215,6 +227,11 @@ class _BoardPanelState extends State<BoardPanel> {
         ),
         if (!_mobile) ...[
           BoardButton(
+            icon: Icons.keyboard_outlined,
+            tooltip: 'Shortcuts (?)',
+            onPressed: _showShortcuts,
+          ),
+          BoardButton(
             icon: Icons.remove,
             tooltip: 'Zoom out',
             onPressed: () => _zoom(1 / 1.35),
@@ -301,6 +318,19 @@ class _BoardPanelState extends State<BoardPanel> {
             tooltip: 'Box (R)',
             onPressed: () => c.setTool(Tool.box),
             on: c.tool == Tool.box,
+          ),
+          const SizedBox(width: 6),
+          BoardButton(
+            label: 'Text',
+            tooltip: 'Text (T)',
+            onPressed: () => c.setTool(Tool.text),
+            on: c.tool == Tool.text,
+          ),
+          const SizedBox(width: 6),
+          BoardButton(
+            icon: Icons.more_horiz,
+            tooltip: 'More board tools',
+            onPressed: _moreTools,
           ),
         ],
       ),
@@ -418,11 +448,17 @@ class _BoardPanelState extends State<BoardPanel> {
                       () => c.setTool(Tool.circle),
                     ),
                     ('Draw box', Icons.crop_square, () => c.setTool(Tool.box)),
+                    ('Add text', Icons.text_fields, () => c.setTool(Tool.text)),
                     ('Fit view', Icons.fit_screen, _fit),
                     ('Zoom in', Icons.zoom_in, () => _zoom(1.35)),
                     ('Zoom out', Icons.zoom_out, () => _zoom(1 / 1.35)),
                     ('Save board .json', Icons.download, widget.onSave),
                     ('Open board file', Icons.folder_open, widget.onOpen),
+                    (
+                      'Keyboard shortcuts',
+                      Icons.keyboard_outlined,
+                      _showShortcuts,
+                    ),
                   ])
                     ListTile(
                       leading: Icon(item.$2, color: _ink),
@@ -449,53 +485,84 @@ class _BoardPanelState extends State<BoardPanel> {
     final size = c.extent;
     final byId = {for (final k in c.cards) k.id: k};
     final sel = c.selected;
-    return CallbackShortcuts(
-      bindings: {
-        const SingleActivator(LogicalKeyboardKey.keyZ, meta: true): c.undo,
-        const SingleActivator(LogicalKeyboardKey.keyZ, control: true): c.undo,
-        const SingleActivator(LogicalKeyboardKey.keyZ, meta: true, shift: true):
-            c.redo,
-        const SingleActivator(
-          LogicalKeyboardKey.keyZ,
-          control: true,
-          shift: true,
-        ): c.redo,
-        const SingleActivator(LogicalKeyboardKey.keyY, control: true): c.redo,
-        const SingleActivator(LogicalKeyboardKey.keyD, meta: true):
-            c.duplicateSelected,
-        const SingleActivator(LogicalKeyboardKey.keyD, control: true):
-            c.duplicateSelected,
-        const SingleActivator(LogicalKeyboardKey.delete): c.deleteSelected,
-        const SingleActivator(LogicalKeyboardKey.backspace): c.deleteSelected,
-        const SingleActivator(LogicalKeyboardKey.escape): () {
-          _panMode = false;
-          c.arrowFrom = null;
-          if (c.tool != Tool.select) c.setTool(Tool.select);
-          c.select(null);
-        },
-        const SingleActivator(LogicalKeyboardKey.keyV): () {
-          if (c.tool != Tool.select) c.setTool(Tool.select);
-        },
-        const SingleActivator(LogicalKeyboardKey.keyH): () =>
-            setState(() => _panMode = !_panMode),
-        const SingleActivator(LogicalKeyboardKey.keyN): _addNote,
-        const SingleActivator(LogicalKeyboardKey.keyR): () {
-          if (c.tool != Tool.box) c.setTool(Tool.box);
-        },
-        const SingleActivator(LogicalKeyboardKey.keyO): () {
-          if (c.tool != Tool.circle) c.setTool(Tool.circle);
-        },
-        const SingleActivator(LogicalKeyboardKey.keyA): () {
-          if (c.tool != Tool.arrow) c.setTool(Tool.arrow);
-        },
-        const SingleActivator(LogicalKeyboardKey.digit1, shift: true): _fit,
-        const SingleActivator(LogicalKeyboardKey.equal): () => _zoom(1.35),
-        const SingleActivator(LogicalKeyboardKey.minus): () => _zoom(1 / 1.35),
+    // While typing in place only Escape is bound, so letters and Backspace go to the text.
+    final bindings = <ShortcutActivator, VoidCallback>{
+      const SingleActivator(LogicalKeyboardKey.keyZ, meta: true): c.undo,
+      const SingleActivator(LogicalKeyboardKey.keyZ, control: true): c.undo,
+      const SingleActivator(LogicalKeyboardKey.keyZ, meta: true, shift: true):
+          c.redo,
+      const SingleActivator(
+        LogicalKeyboardKey.keyZ,
+        control: true,
+        shift: true,
+      ): c.redo,
+      const SingleActivator(LogicalKeyboardKey.keyY, control: true): c.redo,
+      const SingleActivator(LogicalKeyboardKey.keyD, meta: true):
+          c.duplicateSelected,
+      const SingleActivator(LogicalKeyboardKey.keyD, control: true):
+          c.duplicateSelected,
+      const SingleActivator(LogicalKeyboardKey.delete): c.deleteSelected,
+      const SingleActivator(LogicalKeyboardKey.backspace): c.deleteSelected,
+      const SingleActivator(LogicalKeyboardKey.escape): () {
+        _panMode = false;
+        c.arrowFrom = null;
+        if (c.tool != Tool.select) c.setTool(Tool.select);
+        c.select(null);
       },
+      const SingleActivator(LogicalKeyboardKey.keyV): () {
+        if (c.tool != Tool.select) c.setTool(Tool.select);
+      },
+      const SingleActivator(LogicalKeyboardKey.keyH): () =>
+          setState(() => _panMode = !_panMode),
+      const SingleActivator(LogicalKeyboardKey.keyN): _addNote,
+      const SingleActivator(LogicalKeyboardKey.keyT): () {
+        if (c.tool != Tool.text) c.setTool(Tool.text);
+      },
+      const SingleActivator(LogicalKeyboardKey.enter): _editSelected,
+      const SingleActivator(LogicalKeyboardKey.slash, shift: true):
+          _showShortcuts,
+      const SingleActivator(LogicalKeyboardKey.keyR): () {
+        if (c.tool != Tool.box) c.setTool(Tool.box);
+      },
+      const SingleActivator(LogicalKeyboardKey.keyO): () {
+        if (c.tool != Tool.circle) c.setTool(Tool.circle);
+      },
+      const SingleActivator(LogicalKeyboardKey.keyA): () {
+        if (c.tool != Tool.arrow) c.setTool(Tool.arrow);
+      },
+      const SingleActivator(LogicalKeyboardKey.digit1, shift: true): _fit,
+      const SingleActivator(LogicalKeyboardKey.equal): () => _zoom(1.35),
+      const SingleActivator(LogicalKeyboardKey.minus): () => _zoom(1 / 1.35),
+    };
+    final editBindings = <ShortcutActivator, VoidCallback>{
+      const SingleActivator(LogicalKeyboardKey.escape): () => c.select(null),
+    };
+    return CallbackShortcuts(
+      bindings: _editing != null ? editBindings : bindings,
       child: Focus(
         focusNode: _focus,
+        onKeyEvent: (node, e) {
+          // Typing with something selected starts writing in it (tool letters keep their job).
+          final ch = e.character;
+          if (e is KeyDownEvent &&
+              _editing == null &&
+              c.selected != null &&
+              ch != null &&
+              ch.length == 1 &&
+              ch.trim().isNotEmpty &&
+              !HardwareKeyboard.instance.isControlPressed &&
+              !HardwareKeyboard.instance.isMetaPressed &&
+              !HardwareKeyboard.instance.isAltPressed &&
+              !'vhtnroa+-=?1!'.contains(ch.toLowerCase())) {
+            _beginEdit(c.selected!, seed: ch);
+            return KeyEventResult.handled;
+          }
+          return KeyEventResult.ignored;
+        },
         child: Listener(
-          onPointerDown: (_) => _focus.requestFocus(),
+          onPointerDown: (_) {
+            if (_editing == null) _focus.requestFocus();
+          },
           child: InteractiveViewer(
             transformationController: _tc,
             constrained: false,
@@ -518,10 +585,17 @@ class _BoardPanelState extends State<BoardPanel> {
                   Positioned.fill(
                     child: GestureDetector(
                       behavior: HitTestBehavior.opaque,
-                      onTap: () {
+                      onTapUp: (d) {
+                        if (c.tool == Tool.text) {
+                          final t = c.addText(d.localPosition);
+                          _beginEdit(t);
+                          return;
+                        }
                         c.arrowFrom = null;
                         c.select(null);
                       },
+                      onDoubleTapDown: (d) => _dblAt = d.localPosition,
+                      onDoubleTap: _doubleTapCanvas,
                       child: Listener(
                         behavior: HitTestBehavior.opaque,
                         onPointerDown: drawTool
@@ -557,15 +631,18 @@ class _BoardPanelState extends State<BoardPanel> {
                   ),
                   Positioned.fill(
                     child: IgnorePointer(
-                      ignoring: drawTool || _panMode,
+                      ignoring: drawTool || _panMode || c.tool == Tool.text,
                       child: Stack(
                         clipBehavior: Clip.none,
                         children: [
                           for (final s in c.shapes) _shape(s),
                           for (final l in c.links) ?_arrowView(l, byId),
                           for (final k in c.cards) _card(k),
-                          if (sel is ShapeModel && !_panMode)
+                          if (sel is ShapeModel &&
+                              !_panMode &&
+                              _editing == null)
                             _resizeHandle(sel),
+                          if (_editing != null) _editor(_editing!, byId),
                         ],
                       ),
                     ),
@@ -583,6 +660,20 @@ class _BoardPanelState extends State<BoardPanel> {
         ),
       ),
     );
+  }
+
+  /// Double-click on empty canvas writes there; inside a shape it writes in the shape.
+  void _doubleTapCanvas() {
+    if (c.tool != Tool.select) return;
+    final p = _dblAt;
+    for (final s in c.shapes.reversed) {
+      if (s.rect.contains(p)) {
+        _beginEdit(s);
+        return;
+      }
+    }
+    final t = c.addText(p);
+    _beginEdit(t);
   }
 
   void _finishDraw() {
@@ -608,7 +699,7 @@ class _BoardPanelState extends State<BoardPanel> {
         behavior: HitTestBehavior
             .deferToChild, // only the stroke is grabbable, so cards inside stay clickable
         onTap: () => c.select(s),
-        onDoubleTap: () => _editLabel(s),
+        onDoubleTap: () => _beginEdit(s),
         onPanStart: (_) {
           c.checkpoint();
           c.select(s);
@@ -674,7 +765,7 @@ class _BoardPanelState extends State<BoardPanel> {
       child: GestureDetector(
         behavior: HitTestBehavior.deferToChild,
         onTap: () => c.select(l),
-        onDoubleTap: () => _editLabel(l),
+        onDoubleTap: () => _beginEdit(l),
         child: CustomPaint(
           painter: _ArrowPainter(
             p - box.topLeft,
@@ -712,7 +803,7 @@ class _BoardPanelState extends State<BoardPanel> {
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () => _tapCard(k),
-        onDoubleTap: moving ? () => _editCard(k) : null,
+        onDoubleTap: moving ? () => _beginEdit(k) : null,
         onPanStart: moving
             ? (_) {
                 c.checkpoint();
@@ -811,106 +902,230 @@ class _BoardPanelState extends State<BoardPanel> {
 
   void _editSelected() {
     final s = c.selected;
-    if (s is CardModel) {
-      _editCard(s);
-    } else if (s != null) {
-      _editLabel(s);
+    if (s != null) _beginEdit(s);
+  }
+
+  String _textOf(Object o) => o is CardModel
+      ? o.text
+      : o is ShapeModel
+      ? o.label
+      : (o as Link).label;
+
+  /// Writes in place, the way Excalidraw does: no dialog, the text field sits on the element.
+  void _beginEdit(Object o, {String? seed}) {
+    if (_editing != null && !identical(_editing, o)) _commitEdit();
+    _panMode = false;
+    _editing = o;
+    _editIsNew = o is ShapeModel && o.type == 'text' && o.label.isEmpty;
+    final t = seed ?? _textOf(o);
+    _etc.value = TextEditingValue(
+      text: t,
+      selection: TextSelection.collapsed(offset: t.length),
+    );
+    if (!identical(c.selected, o)) c.select(o);
+    setState(() {});
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _editing == o) _efocus.requestFocus();
+    });
+  }
+
+  void _commitEdit() {
+    final o = _editing;
+    if (o == null) return;
+    _editing = null;
+    final v = _etc.text;
+    final isNew = _editIsNew;
+    _editIsNew = false;
+    if (o is ShapeModel && o.type == 'text' && v.trim().isEmpty) {
+      // An empty text element is not kept (and an empty new one leaves no undo step).
+      if (isNew) {
+        c.undo();
+      } else {
+        c.select(o);
+        c.deleteSelected();
+      }
+      return;
+    }
+    if (v != _textOf(o)) {
+      if (!isNew) c.checkpoint();
+      if (o is CardModel) {
+        o.text = v.length > 1400 ? v.substring(0, 1400) : v;
+      } else if (o is ShapeModel) {
+        o.label = v.length > 400 ? v.substring(0, 400) : v;
+        if (o.type == 'text') {
+          final tp = _text(o.label, 26, _ink, maxW: o.rect.width, lines: 12);
+          o.rect = Rect.fromLTWH(
+            o.rect.left,
+            o.rect.top,
+            o.rect.width,
+            math.max(44, tp.height + 14),
+          );
+        }
+      } else if (o is Link) {
+        o.label = v.length > 60 ? v.substring(0, 60) : v;
+      }
+      c.changed();
     }
   }
 
-  Future<void> _editLabel(Object o) async {
-    final current = o is ShapeModel ? o.label : (o as Link).label;
-    final ctl = TextEditingController(text: current);
-    final ok = await showDialog<bool>(
+  /// Where the in-place editor sits (scene coordinates) and which style it uses.
+  Widget _editor(Object o, Map<String, CardModel> byId) {
+    Rect r;
+    TextStyle style;
+    Color fill = Colors.white;
+    var multi = true;
+    if (o is CardModel) {
+      r = Rect.fromLTWH(
+        o.x + 8,
+        o.y + 8,
+        cardSize.width - 22,
+        cardSize.height - 22,
+      );
+      fill = cardColors[o.color] ?? Colors.white;
+      style = TextStyle(
+        fontFamily: hand,
+        fontSize: o.type == 'title' ? 22 : 21,
+        height: 1.05,
+        color: _ink,
+        fontWeight: o.type == 'title' ? FontWeight.w700 : FontWeight.w500,
+      );
+    } else if (o is ShapeModel && o.type == 'text') {
+      r = Rect.fromLTWH(
+        o.rect.left,
+        o.rect.top,
+        math.max(160, o.rect.width),
+        44,
+      );
+      style = const TextStyle(
+        fontFamily: hand,
+        fontSize: 26,
+        height: 1.1,
+        color: _ink,
+        fontWeight: FontWeight.w600,
+      );
+    } else if (o is ShapeModel) {
+      final w = math.max(120.0, math.min(240.0, o.rect.width - 16));
+      r = o.type == 'circle'
+          ? Rect.fromLTWH(o.rect.center.dx - w / 2, o.rect.top - 34, w, 34)
+          : Rect.fromLTWH(o.rect.left + 8, o.rect.top + 6, w, 34);
+      style = const TextStyle(
+        fontFamily: hand,
+        fontSize: 23,
+        color: _brown,
+        fontWeight: FontWeight.w600,
+      );
+      multi = false;
+    } else {
+      final l = o as Link;
+      final a = byId[l.from], b = byId[l.to];
+      final mid = a == null || b == null
+          ? const Offset(60, 60)
+          : (Offset(a.x, a.y) + Offset(b.x, b.y)) / 2 +
+                Offset(cardSize.width / 2, cardSize.height / 2);
+      r = Rect.fromCenter(center: mid, width: 150, height: 34);
+      style = const TextStyle(
+        fontFamily: hand,
+        fontSize: 20,
+        color: _arrow,
+        fontWeight: FontWeight.w600,
+      );
+      multi = false;
+    }
+    return Positioned.fromRect(
+      rect: r,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6),
+        decoration: BoxDecoration(
+          color: fill,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: _gold, width: 1.6),
+        ),
+        child: Focus(
+          onKeyEvent: (n, e) {
+            if (e is KeyDownEvent &&
+                e.logicalKey == LogicalKeyboardKey.escape) {
+              c.select(null); // ends the edit and keeps what was typed
+              return KeyEventResult.handled;
+            }
+            return KeyEventResult.ignored;
+          },
+          child: TextField(
+            controller: _etc,
+            focusNode: _efocus,
+            maxLines: multi ? null : 1,
+            minLines: 1,
+            style: style,
+            cursorColor: _gold,
+            decoration: const InputDecoration(
+              isDense: true,
+              border: InputBorder.none,
+              contentPadding: EdgeInsets.symmetric(vertical: 6),
+            ),
+            onSubmitted: multi ? null : (_) => c.select(null),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showShortcuts() {
+    const rows = [
+      ('V', 'Select'),
+      ('H', 'Hand: drag to move the canvas'),
+      ('T', 'Text: tap anywhere and write'),
+      ('N', 'New note card'),
+      ('R', 'Draw a box'),
+      ('O', 'Draw a circle'),
+      ('A', 'Connect two cards with an arrow'),
+      ('Double-click', 'Write in anything, or on empty space'),
+      ('Enter', 'Write in the selected item'),
+      ('Esc', 'Finish writing, or go back to select'),
+      ('Ctrl/Cmd + D', 'Duplicate'),
+      ('Ctrl/Cmd + Z', 'Undo (add Shift to redo)'),
+      ('Delete', 'Delete selected'),
+      ('Shift + 1', 'Fit view'),
+      ('+ / -', 'Zoom'),
+    ];
+    showDialog<void>(
       context: context,
       builder: (d) => AlertDialog(
-        title: Text(o is ShapeModel ? 'Label this shape' : 'Label this arrow'),
-        content: TextField(
-          controller: ctl,
-          autofocus: true,
-          maxLength: 60,
-          decoration: const InputDecoration(hintText: 'e.g. leads to'),
+        backgroundColor: Colors.white,
+        title: const Text('Board shortcuts'),
+        content: SizedBox(
+          width: 360,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final r in rows)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 5),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SizedBox(
+                          width: 110,
+                          child: Text(
+                            r.$1,
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                        Expanded(child: Text(r.$2)),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(d, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(d, true),
-            child: const Text('Save'),
+            onPressed: () => Navigator.pop(d),
+            child: const Text('Close'),
           ),
         ],
       ),
     );
-    if (ok != true) return;
-    c.checkpoint();
-    if (o is ShapeModel) {
-      o.label = ctl.text.trim();
-    } else if (o is Link) {
-      o.label = ctl.text.trim();
-    }
-    c.changed();
-  }
-
-  Future<void> _editCard(CardModel k) async {
-    final ctl = TextEditingController(text: k.text);
-    var color = k.color;
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (d) => StatefulBuilder(
-        builder: (d, setD) => AlertDialog(
-          title: const Text('Edit card'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: ctl,
-                maxLines: 5,
-                maxLength: 1400,
-                autofocus: true,
-              ),
-              Wrap(
-                spacing: 8,
-                children: [
-                  for (final e in cardColors.entries)
-                    GestureDetector(
-                      onTap: () => setD(() => color = e.key),
-                      child: CircleAvatar(
-                        radius: 15,
-                        backgroundColor: e.value,
-                        child: color == e.key
-                            ? const Icon(Icons.check, size: 15, color: _ink)
-                            : null,
-                      ),
-                    ),
-                ],
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.pop(d, false);
-                c.select(k);
-                c.deleteSelected();
-              },
-              child: const Text('Delete'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(d, true),
-              child: const Text('Save'),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (ok == true) {
-      c.checkpoint();
-      k.text = ctl.text;
-      k.color = color;
-      c.changed();
-    }
   }
 }
 
@@ -988,6 +1203,7 @@ class _ShapePainter extends CustomPainter {
   @override
   bool? hitTest(Offset p) {
     final r = _local;
+    if (s.type == 'text') return r.inflate(8).contains(p);
     if (s.type == 'circle') {
       final cx = r.center.dx,
           cy = r.center.dy,
@@ -1012,14 +1228,26 @@ class _ShapePainter extends CustomPainter {
       ..strokeWidth = 3
       ..strokeCap = StrokeCap.round
       ..color = _brown;
-    sketch(
-      canvas,
-      stroke,
-      s.hashCode,
-      (rnd) => s.type == 'circle' ? roughEllipse(r, rnd) : roughRect(r, rnd),
-      dash: const [8, 3, 2, 3],
-    );
-    if (s.label.isNotEmpty) {
+    if (s.type == 'text') {
+      if (s.label.isNotEmpty) {
+        _text(
+          s.label,
+          26,
+          _ink,
+          maxW: r.width,
+          lines: 12,
+        ).paint(canvas, r.topLeft + const Offset(0, 6));
+      }
+    } else {
+      sketch(
+        canvas,
+        stroke,
+        s.hashCode,
+        (rnd) => s.type == 'circle' ? roughEllipse(r, rnd) : roughRect(r, rnd),
+        dash: const [8, 3, 2, 3],
+      );
+    }
+    if (s.type != 'text' && s.label.isNotEmpty) {
       final tp = _text(s.label, 23, _brown, maxW: math.max(40, r.width - 20));
       tp.paint(
         canvas,

@@ -34,6 +34,29 @@ let segSamples = 0, speechSamples = 0, lastSpeechAt = 0, lastPartial = '';
 
 const HALLUCINATIONS = /^(?:thanks for watching|thank you\.?|you|bye\.?|\.+)$/i;
 
+// Engines whose model files are not shipped with this build are treated as not installed.
+// (Static hosts may answer a missing file with index.html and status 200, so check the content type too.)
+const availability = {};
+function isInstalled(name) {
+  const v = VARIANTS[name];
+  if (!v) return Promise.resolve(false);
+  if (!v.local) return Promise.resolve(true);
+  availability[name] ??= (async () => {
+    try {
+      const base = new URL('models/', globalThis.document?.baseURI || location.href).href;
+      const r = await fetch(base + v.model + '/config.json', { cache: 'no-cache' });
+      const t = r.headers.get('content-type') || '';
+      if (!r.ok || t.includes('html')) return false;
+      const p = await fetch(base + v.model + '/onnx/' + PARTS[0], { method: 'HEAD', cache: 'no-cache' });
+      return p.ok && !(p.headers.get('content-type') || '').includes('html');
+    } catch (_) { return false; }
+  })();
+  return availability[name];
+}
+let notice = '';
+let onNotice = null;
+function setNotice(t) { notice = t; onNotice?.(t); if (t) console.warn('voino asr:', t); }
+
 // The decoder is split in parts (GitHub web uploads are capped at 25 MB per file); put it back together on load.
 const PARTS = ['decoder_model_merged_quantized.onnx.part1', 'decoder_model_merged_quantized.onnx.part2', 'decoder_model_merged_quantized.onnx.part3'];
 function hinglishCache(base) {
@@ -53,7 +76,12 @@ function hinglishCache(base) {
   };
 }
 
-function loadModel(onProgress) {
+async function loadModel(onProgress) {
+  if (!(await isInstalled(variant))) {
+    const missing = VARIANTS[variant].label;
+    setVariant('multi');
+    setNotice(`${missing} is not installed in this build; using ${VARIANTS.multi.label}.`);
+  }
   const v = VARIANTS[variant];
   if (!asrPromises[variant]) {
     asrPromises[variant] = (async () => {
@@ -250,12 +278,15 @@ function debugPanel() {
   const sel = document.createElement('select');
   for (const k of Object.keys(VARIANTS)) { const o = document.createElement('option'); o.value = k; o.textContent = VARIANTS[k].label; sel.appendChild(o); }
   sel.value = variant;
+  const status = document.createElement('div'); status.style.cssText = 'color:#fc6;margin-top:4px';
+  onNotice = (t) => { status.textContent = t; sel.value = variant; };
+  for (const o of sel.options) isInstalled(o.value).then((ok) => { if (!ok) { o.textContent += ' - not installed'; o.disabled = true; if (sel.value === o.value) { setVariant('multi'); sel.value = 'multi'; } } });
   sel.onchange = () => { if (running) { sel.value = variant; alert('Stop listening first, then switch model.'); return; } setVariant(sel.value); };
   const note = document.createElement('div');
   note.textContent = 'Hinglish tiny has no stated license: test only. Switch model while not listening.';
   note.style.opacity = '.7';
   const rows = document.createElement('div');
-  box.append(sel, note, rows);
+  box.append(sel, note, status, rows);
   btn.onclick = () => { box.style.display = box.style.display === 'none' ? 'block' : 'none'; };
   onLog = (e) => {
     const d = document.createElement('div');

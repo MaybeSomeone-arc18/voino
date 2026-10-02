@@ -20,7 +20,7 @@ class EngineSwitch extends StatefulWidget {
     this.accent = const Color(0xFFC4903F),
   });
 
-  final String engine; // 'device' (cloud) | 'whisper' (on-device)
+  final String engine; // 'device' (cloud) | 'whisper' (on-device) | 'gemini' (cloud, free tier)
   final ValueChanged<String> onChanged;
   final Color ink, paper, accent;
   final bool cloudEnabled, enabled;
@@ -30,9 +30,10 @@ class EngineSwitch extends StatefulWidget {
 }
 
 class _EngineSwitchState extends State<EngineSwitch> with SingleTickerProviderStateMixin {
-  static const _side = 112.0, _h = 34.0, _pad = 3.0;
+  static const _side = 100.0, _h = 34.0, _pad = 3.0;
   late final AnimationController _burst = AnimationController(vsync: this, duration: const Duration(milliseconds: 600));
-  bool _burstLeft = true;
+  int _burstIndex = 0;
+  static int _index(String e) => e == 'device' ? 0 : (e == 'whisper' ? 1 : 2);
 
   Color get ink => widget.ink;
   Color get paper => widget.paper;
@@ -43,7 +44,7 @@ class _EngineSwitchState extends State<EngineSwitch> with SingleTickerProviderSt
   void didUpdateWidget(EngineSwitch old) {
     super.didUpdateWidget(old);
     if (old.engine != widget.engine) {
-      _burstLeft = widget.engine == 'device';
+      _burstIndex = _index(widget.engine);
       _burst.forward(from: 0);
     }
   }
@@ -103,14 +104,16 @@ class _EngineSwitchState extends State<EngineSwitch> with SingleTickerProviderSt
   Widget build(BuildContext context) {
     final hint = engine == 'whisper'
         ? 'On-device: private, no internet after the first download'
-        : 'Cloud: starts instantly, needs internet';
+        : engine == 'gemini'
+            ? 'Gemini: stronger Hindi/Hinglish, free tier with limits, audio goes to Google'
+            : 'Cloud: starts instantly, needs internet';
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         Opacity(
           opacity: enabled ? 1 : 0.5,
           child: Container(
-            width: _side * 2 + _pad * 2,
+            width: _side * 3 + _pad * 2,
             height: _h,
             padding: const EdgeInsets.all(_pad),
             decoration: BoxDecoration(
@@ -124,7 +127,7 @@ class _EngineSwitchState extends State<EngineSwitch> with SingleTickerProviderSt
                 AnimatedAlign(
                   duration: const Duration(milliseconds: 380),
                   curve: Curves.easeOutBack,
-                  alignment: engine == 'device' ? Alignment.centerLeft : Alignment.centerRight,
+                  alignment: Alignment(_index(engine) - 1.0, 0),
                   child: Container(
                     width: _side,
                     height: _h - _pad * 2,
@@ -136,7 +139,7 @@ class _EngineSwitchState extends State<EngineSwitch> with SingleTickerProviderSt
                     child: AnimatedBuilder(
                       animation: _burst,
                       builder: (context, _) => CustomPaint(
-                        painter: _BurstPainter(_burst.value, _burstLeft, _side, widget.accent),
+                        painter: _BurstPainter(_burst.value, _burstIndex, _side, widget.accent),
                       ),
                     ),
                   ),
@@ -145,6 +148,7 @@ class _EngineSwitchState extends State<EngineSwitch> with SingleTickerProviderSt
                   children: [
                     _option('device', Icons.cloud_outlined, 'Cloud', widget.cloudEnabled),
                     _option('whisper', Icons.phone_iphone, 'On-device', true),
+                    _option('gemini', Icons.auto_awesome, 'Gemini', true),
                   ],
                 ),
               ],
@@ -167,15 +171,15 @@ class _EngineSwitchState extends State<EngineSwitch> with SingleTickerProviderSt
 
 /// Small burst of rays and a ring that radiates from the side that was just selected.
 class _BurstPainter extends CustomPainter {
-  _BurstPainter(this.t, this.left, this.side, this.color);
+  _BurstPainter(this.t, this.index, this.side, this.color);
   final double t, side;
-  final bool left;
+  final int index;
   final Color color;
 
   @override
   void paint(Canvas canvas, Size size) {
     if (t <= 0 || t >= 1) return;
-    final c = Offset(left ? side / 2 : side * 1.5, size.height / 2);
+    final c = Offset(side * (index + 0.5), size.height / 2);
     final fade = 1 - t;
     final ease = Curves.easeOutCubic.transform(t);
     final ray = Paint()
@@ -199,5 +203,5 @@ class _BurstPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_BurstPainter old) => old.t != t || old.left != left;
+  bool shouldRepaint(_BurstPainter old) => old.t != t || old.index != index;
 }

@@ -118,8 +118,9 @@ class _EngineSwitchState extends State<EngineSwitch> with SingleTickerProviderSt
             padding: const EdgeInsets.all(_pad),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(_h / 2),
-              border: Border.all(color: ink.withValues(alpha: 0.25)),
-              color: paper.withValues(alpha: 0.7),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.85)),
+              color: Colors.white.withValues(alpha: 0.5),
+              boxShadow: [BoxShadow(color: ink.withValues(alpha: 0.10), blurRadius: 14, offset: const Offset(0, 4))],
             ),
             child: Stack(
               clipBehavior: Clip.none,

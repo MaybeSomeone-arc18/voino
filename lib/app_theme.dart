@@ -47,6 +47,32 @@ ThemeData buildAppTheme() {
     dialogTheme: DialogThemeData(
       backgroundColor: AppColors.paper,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+      titleTextStyle: serif(24, 30),
+      contentTextStyle: GoogleFonts.inter(fontSize: 14, height: 20 / 14, color: ink),
+    ),
+    popupMenuTheme: PopupMenuThemeData(
+      color: AppColors.paper,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      textStyle: GoogleFonts.inter(fontSize: 14, height: 20 / 14, color: ink),
+    ),
+    bottomSheetTheme: const BottomSheetThemeData(
+      backgroundColor: AppColors.paper,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(28))),
+    ),
+    textButtonTheme: TextButtonThemeData(
+      style: TextButton.styleFrom(
+        foregroundColor: ink,
+        shape: const StadiumBorder(),
+        textStyle: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w600),
+      ),
+    ),
+    filledButtonTheme: FilledButtonThemeData(
+      style: FilledButton.styleFrom(
+        shape: const StadiumBorder(),
+        textStyle: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w600),
+      ),
     ),
   );
 }

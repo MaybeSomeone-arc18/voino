@@ -1,25 +1,37 @@
-// Web-only local speech-to-text: multilingual Whisper tiny in the browser (Hindi + English, language auto-detected) via transformers.js (WASM).
+// Web-only local speech-to-text: multilingual Whisper tiny in the browser via transformers.js (WASM).
+// Hindi + English with per-segment language detection. Hindi output is romanized to English letters (Hinglish).
 // The model (about 40 MB quantized) downloads on first use and is cached by the browser.
-// Audio is recorded in 5-second standalone chunks, each transcribed separately.
+//
+// Live mode: audio is captured continuously (no 5 s recorder chunks). Every STEP_MS the open
+// segment is re-transcribed and shown as a PARTIAL result right away; when the speaker pauses
+// (or the segment reaches MAX_SEG_S) the segment is transcribed once more and committed as FINAL.
 const TRANSFORMERS = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1/dist/transformers.min.js';
 const MODEL = 'Xenova/whisper-tiny'; // multilingual; the old tiny.en model was English-only
-const CHUNK_MS = 5000;
-const MIN_SECONDS = 0.6;
+const RATE = 16000;
+const STEP_MS = 700; // how often a partial update is attempted (skipped while a decode is running)
+const PAUSE_MS = 600; // silence that ends a segment
+const MAX_SEG_S = 12; // force-commit long monologues
+const MIN_SECONDS = 0.5;
 const SILENCE_RMS = 0.004;
+const BUFFER = 2048; // 128 ms frames at 16 kHz
 
-const supported = !!(navigator.mediaDevices?.getUserMedia && window.MediaRecorder && (window.AudioContext || window.webkitAudioContext));
+const supported = !!(navigator.mediaDevices?.getUserMedia && (window.AudioContext || window.webkitAudioContext));
 
 let asrPromise = null;
-let stream = null;
-let running = false;
-let chain = Promise.resolve();
-let audioCtx = null;
-let loopDone = Promise.resolve();
+let TensorCls = null;
+let segLang = null; // 'en' | 'hi' for the open segment, detected once per segment
+let stream = null, audioCtx = null, source = null, proc = null, timer = null;
+let running = false, busy = false;
+let seg = []; // Float32Array frames of the open segment
+let segSamples = 0, speechSamples = 0, lastSpeechAt = 0, lastPartial = '';
+
+const HALLUCINATIONS = /^(?:thanks for watching|thank you\.?|you|bye\.?|\.+)$/i;
 
 function loadModel(onProgress) {
   if (!asrPromise) {
     asrPromise = (async () => {
-      const { pipeline, env } = await import(TRANSFORMERS);
+      const { pipeline, env, Tensor } = await import(TRANSFORMERS);
+      TensorCls = Tensor;
       env.allowLocalModels = false;
       env.useBrowserCache = true;
       const files = {};
@@ -42,48 +54,79 @@ function loadModel(onProgress) {
   return asrPromise;
 }
 
-function recordOnce() {
-  return new Promise((resolve) => {
-    const rec = new MediaRecorder(stream);
-    const parts = [];
-    rec.ondataavailable = (e) => e.data.size && parts.push(e.data);
-    rec.onstop = () => resolve(new Blob(parts, { type: rec.mimeType }));
-    rec.start();
-    const timer = setTimeout(() => rec.state === 'recording' && rec.stop(), CHUNK_MS);
-    // Stop early when the user stops listening.
-    const watch = setInterval(() => {
-      if (!running && rec.state === 'recording') rec.stop();
-      if (rec.state === 'inactive') {
-        clearInterval(watch);
-        clearTimeout(timer);
-      }
-    }, 100);
-  });
+function joined() {
+  const out = new Float32Array(segSamples);
+  let o = 0;
+  for (const f of seg) { out.set(f, o); o += f.length; }
+  return out;
 }
 
-async function toSamples(blob) {
-  audioCtx ??= new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-  const buf = await audioCtx.decodeAudioData(await blob.arrayBuffer());
-  return buf.getChannelData(0);
+function resetSegment() {
+  seg = []; segSamples = 0; speechSamples = 0; lastPartial = ''; segLang = null;
 }
 
-async function transcribe(blob, asr, onText, onError) {
+// transformers.js defaults to English when no language is given, so detect it ourselves:
+// one decoder step after the start token, then compare the <|hi|> and <|en|> logits.
+async function detectLanguage(asr, samples) {
   try {
-    const samples = await toSamples(blob);
-    if (samples.length < 16000 * MIN_SECONDS) return;
-    let sum = 0;
-    for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
-    if (Math.sqrt(sum / samples.length) < SILENCE_RMS) return; // skip silence, avoids hallucinated text
-    // language omitted so Whisper auto-detects per chunk (Hindi or English)
-    const out = await asr(samples, { task: 'transcribe' });
-    const text = (out?.text || '').trim();
-    if (text) onText(text);
-  } catch (e) {
-    onError('Could not transcribe audio: ' + (e?.message || e));
+    const feats = await asr.processor(samples);
+    const ids = asr.tokenizer.model.tokens_to_ids;
+    const sot = ids.get('<|startoftranscript|>'), en = ids.get('<|en|>'), hi = ids.get('<|hi|>');
+    const out = await asr.model({
+      input_features: feats.input_features,
+      decoder_input_ids: new TensorCls('int64', BigInt64Array.from([BigInt(sot)]), [1, 1]),
+    });
+    const lg = out.logits.data;
+    return lg[hi] > lg[en] ? 'hi' : 'en';
+  } catch (_) {
+    return 'en';
   }
 }
 
-async function start(onText, onProgress, onError) {
+async function decode(asr, samples) {
+  segLang ??= await detectLanguage(asr, samples);
+  const out = await asr(samples, { task: 'transcribe', language: segLang });
+  const raw = (out?.text || '').trim();
+  const text = window.voinoRomanize ? window.voinoRomanize(raw) : raw;
+  return HALLUCINATIONS.test(text) ? '' : text;
+}
+
+async function tick(asr, cb, force = false) {
+  if (busy) return;
+  if (speechSamples < RATE * MIN_SECONDS) {
+    if (!speechSamples && segSamples > RATE * 2) resetSegment(); // long silence, drop it
+    return;
+  }
+  const paused = performance.now() - lastSpeechAt > PAUSE_MS;
+  const isFinal = force || paused || segSamples > RATE * MAX_SEG_S;
+  busy = true;
+  const samples = joined();
+  const taken = segSamples;
+  try {
+    const t0 = performance.now();
+    const text = await decode(asr, samples);
+    const ms = Math.round(performance.now() - t0);
+    cb.onStats?.(ms, taken / RATE, isFinal);
+    if (window.voinoDebug) console.debug('voino asr', { ms, audioSeconds: +(taken / RATE).toFixed(1), isFinal });
+    if (isFinal) {
+      // Keep audio that arrived while decoding; drop only what was transcribed.
+      let drop = taken, kept = [];
+      for (const f of seg) { if (drop >= f.length) drop -= f.length; else kept.push(f); }
+      seg = kept; segSamples = seg.reduce((a, f) => a + f.length, 0); speechSamples = 0; lastPartial = '';
+      cb.onPartial?.('');
+      if (text) cb.onText(text);
+    } else if (text && text !== lastPartial) {
+      lastPartial = text;
+      cb.onPartial?.(text);
+    }
+  } catch (e) {
+    cb.onError('Could not transcribe audio: ' + (e?.message || e));
+  } finally {
+    busy = false;
+  }
+}
+
+async function start(onText, onProgress, onError, onPartial, onStats) {
   if (!supported) throw new Error('This browser cannot record audio.');
   if (running) return;
   onProgress(0);
@@ -92,21 +135,37 @@ async function start(onText, onProgress, onError) {
   stream = await navigator.mediaDevices.getUserMedia({
     audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
   });
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: RATE });
+  source = audioCtx.createMediaStreamSource(stream);
+  proc = audioCtx.createScriptProcessor(BUFFER, 1, 1);
+  resetSegment();
+  proc.onaudioprocess = (e) => {
+    if (!running) return;
+    const data = new Float32Array(e.inputBuffer.getChannelData(0));
+    let sum = 0;
+    for (let i = 0; i < data.length; i++) sum += data[i] * data[i];
+    if (Math.sqrt(sum / data.length) >= SILENCE_RMS) { lastSpeechAt = performance.now(); speechSamples += data.length; }
+    seg.push(data); segSamples += data.length;
+  };
+  source.connect(proc);
+  proc.connect(audioCtx.destination); // required by some browsers; the output buffer stays silent
+  const cb = { onText, onError, onPartial, onStats };
   running = true;
-  loopDone = (async () => {
-    while (running) {
-      const blob = await recordOnce();
-      if (blob.size) chain = chain.then(() => transcribe(blob, asr, onText, onError));
-    }
-  })();
+  timer = setInterval(() => tick(asr, cb), STEP_MS);
+  window.__voinoCb = { asr, cb };
 }
 
 async function stop() {
   running = false;
-  await loopDone; // waits for the final partial chunk
-  await chain; // and for every queued transcription
+  clearInterval(timer);
+  const { asr, cb } = window.__voinoCb || {};
+  while (busy) await new Promise((r) => setTimeout(r, 50));
+  if (asr) await tick(asr, cb, true); // commit the last partial segment
+  proc?.disconnect(); source?.disconnect();
+  await audioCtx?.close();
   stream?.getTracks().forEach((t) => t.stop());
-  stream = null;
+  stream = audioCtx = source = proc = null;
+  resetSegment();
 }
 
 window.voinoWhisper = { supported, start, stop };

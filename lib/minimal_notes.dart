@@ -146,7 +146,7 @@ class MinimalNotes extends StatelessWidget {
         const SizedBox(height: 16),
         const Text(
           'Check extracts against the transcript.',
-          style: TextStyle(fontSize: 11, color: Colors.black54),
+          style: TextStyle(fontSize: 12, color: Colors.black54),
         ),
         if (showActions) ...[
           const SizedBox(height: 20),
@@ -170,7 +170,7 @@ class MinimalNotes extends StatelessWidget {
           const SizedBox(height: 12),
           Text(
             saveStatus,
-            style: const TextStyle(fontSize: 11, color: Colors.black54),
+            style: const TextStyle(fontSize: 12, color: Colors.black54),
           ),
         ],
         const SizedBox(height: 24),

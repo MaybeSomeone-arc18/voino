@@ -19,6 +19,7 @@ const NUKTA = { 'क': 'q', 'ख': 'kh', 'ग': 'g', 'ज': 'z', 'ड': 'r', '�
 const DIGITS = '०१२३४५६७८९';
 
 function romanizeWord(w) {
+  w = w.normalize('NFD'); // precomposed nukta letters (U+0958-095F) split into base + nukta
   if (WORDS[w]) return WORDS[w];
   // Build syllables: {c: consonant string, v: vowel string or null (inherent a)}.
   const syl = [];

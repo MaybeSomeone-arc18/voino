@@ -13,7 +13,10 @@ import 'board_view.dart';
 import 'gemini.dart';
 import 'settings.dart';
 import 'whisper_stub.dart' if (dart.library.js_interop) 'whisper_web.dart';
+import 'engine_switch.dart';
 import 'logic.dart';
+import 'app_theme.dart';
+import 'glass.dart';
 import 'minimal_notes.dart';
 import 'listening_session.dart';
 import 'local_draft.dart';
@@ -29,11 +32,7 @@ class VoinoApp extends StatelessWidget {
   Widget build(BuildContext context) => MaterialApp(
     title: 'Voino',
     debugShowCheckedModeBanner: false,
-    theme: ThemeData(
-      colorSchemeSeed: const Color(0xFF3F6F5A),
-      scaffoldBackgroundColor: const Color(0xFFF4F2EC),
-      useMaterial3: true,
-    ),
+    theme: buildAppTheme(),
     home: const Home(),
   );
 }
@@ -56,7 +55,12 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
   final speech = SpeechToText();
   bool speechReady = false, listening = false, busy = false;
   Settings settings = Settings();
-  String engine = 'device'; // device | whisper (web only)
+  // device | whisper | gemini. Gemini (through the Voino server, free tier) is the default on web.
+  String engine = (kIsWeb && WhisperEngine.supported) ? 'gemini' : 'device';
+  bool get _webAsr => engine == 'whisper' || engine == 'gemini';
+  int engineSwitches = 0; // bumps the mic animation on each switch
+  bool _fellBackToLocal = false;
+  String whisperPartial = ''; // live, not yet committed Whisper text
   String micNote = '';
   String view = 'listen'; // listen | notes | board
   String summary = '', noteSource = '';
@@ -120,7 +124,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
           if (mounted)
             setState(() {
               speechReady = ok;
-              if (!ok && WhisperEngine.supported)
+              if (!ok && WhisperEngine.supported && engine == 'device')
                 engine = 'whisper'; // no device recognizer: use Whisper
             });
         });
@@ -174,6 +178,20 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
         listening = deviceSession.requested;
         micNote = deviceSession.message;
       });
+      // Cloud speech is unreachable: switch to on-device Whisper and start it.
+      if (kIsWeb &&
+          WhisperEngine.supported &&
+          !_fellBackToLocal &&
+          deviceSession.message.toLowerCase().contains('network')) {
+        _fellBackToLocal = true;
+        setState(() {
+          engine = 'whisper';
+          engineSwitches++;
+          listening = false;
+          micNote = 'Cloud speech unreachable. Switched to on-device.';
+        });
+        toggleWhisper();
+      }
     }
   }
 
@@ -294,10 +312,12 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
 
   Future<void> toggleWhisper() async {
+    WhisperEngine.useCloud(engine == 'gemini');
     if (listening) {
       setState(() => micNote = 'Finishing transcription...');
       await WhisperEngine.stop();
       setState(() {
+        whisperPartial = '';
         listening = false;
         micNote = '';
       });
@@ -326,6 +346,9 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
             );
         },
         onError: (m) => _msg(m),
+        onPartial: (t) {
+          if (mounted) setState(() => whisperPartial = t);
+        },
       );
     } catch (e) {
       if (mounted) {
@@ -339,7 +362,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
   }
 
   Future<void> toggleListen() async {
-    if (engine == 'whisper') return toggleWhisper();
+    if (_webAsr) return toggleWhisper();
     if (deviceSession.requested) {
       await deviceSession.stop();
       if (mounted) generate(manual: false);
@@ -449,7 +472,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     ))
       return;
     if (listening) {
-      if (engine == 'whisper') {
+      if (_webAsr) {
         await WhisperEngine.stop();
       } else {
         await deviceSession.stop();
@@ -515,6 +538,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
           const SizedBox(height: 12),
           SegmentedButton<String>(
             segments: [
+              const ButtonSegment(value: 'gemini', label: Text('Gemini')),
               const ButtonSegment(
                 value: 'whisper',
                 label: Text('Whisper (local)'),
@@ -536,7 +560,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
           children: [
             FilledButton.icon(
               onPressed:
-                  (engine == 'whisper' ? WhisperEngine.supported : speechReady)
+                  (_webAsr ? WhisperEngine.supported : speechReady)
                   ? toggleListen
                   : null,
               icon: Icon(listening ? Icons.stop : Icons.mic),
@@ -553,7 +577,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
               child: Text(
                 micNote.isNotEmpty
                     ? micNote
-                    : (engine == 'whisper' || speechReady)
+                    : (_webAsr || speechReady)
                     ? (listening
                           ? 'Listening for words...'
                           : 'Speech available')
@@ -588,7 +612,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
         const SizedBox(height: 8),
         const Text(
           "Speech recognition may use the device or browser vendor's online service. Ask permission before recording other people.",
-          style: TextStyle(fontSize: 11),
+          style: TextStyle(fontSize: 12),
         ),
       ],
     );
@@ -624,7 +648,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
       backgroundColor: paper,
       body: Stack(
         children: [
-          if (view == 'listen' || view == 'board')
+          if (view == 'listen')
             Positioned.fill(
               child: SvgPicture.asset(
                 'assets/voino_bg.svg',
@@ -634,7 +658,11 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
             ),
           if (view != 'listen')
             Positioned.fill(
-              child: ColoredBox(color: paper.withValues(alpha: 0.86)),
+              child: ColoredBox(
+                color: view == 'board'
+                    ? paper
+                    : paper.withValues(alpha: 0.86),
+              ),
             ),
           SafeArea(
             child: Column(
@@ -697,65 +725,74 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     );
   }
 
-  Widget _notesActions() => Container(
-    decoration: const BoxDecoration(
-      color: paper,
-      border: Border(top: BorderSide(color: Color(0xFFDCD5C8))),
-    ),
-    padding: const EdgeInsets.fromLTRB(24, 14, 24, 16),
-    child: Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 720),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: ink,
-                      minimumSize: const Size(0, 47),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(7),
-                      ),
+  Widget _notesActions() => SafeArea(
+    top: false,
+    child: Container(
+      margin: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.35),
+        borderRadius: BorderRadius.circular(32),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.8)),
+      ),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 720),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: GlassButton(
+                      label: 'Copy notes',
+                      ink: ink,
+                      onPressed: () => copy(exportText(currentNote()), 'Notes'),
                     ),
-                    onPressed: () => copy(exportText(currentNote()), 'Notes'),
-                    child: const Text('Copy notes'),
                   ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: FilledButton(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: ink,
-                      foregroundColor: paper,
-                      minimumSize: const Size(0, 47),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(7),
-                      ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: GlassButton(
+                      label: busy ? 'Working...' : 'Make board',
+                      ink: ink,
+                      primary: true,
+                      onPressed: busy ? null : generate,
                     ),
-                    onPressed: busy ? null : generate,
-                    child: Text(busy ? 'Working...' : 'Make board'),
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Text(
-              draft.error.isNotEmpty
-                  ? draft.error
-                  : !draft.ready
-                  ? 'Opening local draft...'
-                  : draft.saved
-                  ? 'Saved on this device · One draft'
-                  : draftTouched
-                  ? 'Saving on this device...'
-                  : 'One draft saves here · No cloud backup',
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 11, color: Colors.black54),
-            ),
-          ],
+                ],
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: GlassButton(label: 'Clear', ink: ink, onPressed: clearAll),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: GlassButton(
+                      label: 'Go to board',
+                      ink: ink,
+                      onPressed: () => setState(() => view = 'board'),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                draft.error.isNotEmpty
+                    ? draft.error
+                    : !draft.ready
+                    ? 'Opening local draft...'
+                    : draft.saved
+                    ? 'Saved on this device · One draft'
+                    : draftTouched
+                    ? 'Saving on this device...'
+                    : 'One draft saves here · No cloud backup',
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 12, color: AppColors.muted),
+              ),
+            ],
+          ),
         ),
       ),
     ),
@@ -787,7 +824,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
   );
 
   Widget _listenView() {
-    final canListen = engine == 'whisper'
+    final canListen = _webAsr
         ? WhisperEngine.supported
         : speechReady;
     return Column(
@@ -803,11 +840,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                 child: Text(
                   'Turn conversations\ninto clarity.',
                   textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 30,
-                    height: 1.25,
-                    fontWeight: FontWeight.w300,
-                    color: ink,
+                  style: Theme.of(context).textTheme.displaySmall?.copyWith(
                     shadows: [
                       for (var k = 0; k < 3; k++)
                         Shadow(color: paper, blurRadius: 14),
@@ -835,10 +868,34 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
             mainAxisSize: MainAxisSize.min,
             children: [
               if (listening) ...[
-                LiveTranscript(text: transcript.text),
+                LiveTranscript(
+                  text: whisperPartial.isEmpty ? transcript.text : '${transcript.text} $whisperPartial',
+                ),
                 const SizedBox(height: 18),
               ],
-              GestureDetector(
+              if (kIsWeb && WhisperEngine.supported) ...[
+                EngineSwitch(
+                  engine: engine,
+                  ink: ink,
+                  paper: paper,
+                  cloudEnabled: speechReady,
+                  enabled: !listening,
+                  onChanged: (v) => setState(() {
+                    engine = v;
+                    engineSwitches++;
+                    micNote = '';
+                    _fellBackToLocal = false;
+                  }),
+                ),
+                const SizedBox(height: 14),
+              ],
+              TweenAnimationBuilder<double>(
+                key: ValueKey(engineSwitches),
+                tween: Tween(begin: engineSwitches == 0 ? 1.0 : 1.2, end: 1.0),
+                duration: const Duration(milliseconds: 500),
+                curve: Curves.elasticOut,
+                builder: (context, scale, child) => Transform.scale(scale: scale, child: child),
+                child: GestureDetector(
                 onTap: canListen ? toggleListen : null,
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 250),
@@ -848,7 +905,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                     shape: BoxShape.circle,
                     color:
                         listening &&
-                            (engine == 'whisper' || deviceSession.active)
+                            (_webAsr || deviceSession.active)
                         ? gold
                         : ink,
                     boxShadow: [
@@ -863,6 +920,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                     color: paper,
                     size: 34,
                   ),
+                ),
                 ),
               ),
               const SizedBox(height: 10),
@@ -879,8 +937,9 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                     ? 'Start listening'
                     : 'Continue listening',
                 style: const TextStyle(
-                  fontSize: 12,
-                  letterSpacing: 1.2,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  letterSpacing: 0.3,
                   color: ink,
                 ),
               ),
@@ -892,7 +951,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                     onPressed: () => setState(() => view = 'notes'),
                     child: const Text(
                       'Type instead',
-                      style: TextStyle(fontSize: 12, color: Colors.black54),
+                      style: const TextStyle(fontSize: 14, color: AppColors.muted),
                     ),
                   ),
                   if (transcript.text.trim().isNotEmpty) ...[
@@ -900,14 +959,14 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                       onPressed: busy ? null : generate,
                       child: const Text(
                         'Done',
-                        style: TextStyle(fontSize: 12, color: Colors.black54),
+                        style: const TextStyle(fontSize: 14, color: AppColors.muted),
                       ),
                     ),
                     TextButton(
                       onPressed: clearAll,
                       child: const Text(
                         'Clear',
-                        style: TextStyle(fontSize: 12, color: Colors.black54),
+                        style: const TextStyle(fontSize: 14, color: AppColors.muted),
                       ),
                     ),
                   ],
@@ -1067,7 +1126,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                     title: const Text('Use Voino\'s hosted summarizer'),
                     subtitle: const Text(
                       'No key needed. Sends the transcript to the Voino server, which forwards it to Gemini. Rate limited; used after your own keys.',
-                      style: TextStyle(fontSize: 11),
+                      style: TextStyle(fontSize: 12),
                     ),
                     value: proxy,
                     onChanged: (v) => setD(() => proxy = v),

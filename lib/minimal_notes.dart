@@ -25,17 +25,15 @@ class MinimalNotes extends StatelessWidget {
   Widget section(String title, List<Widget> rows) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      Text(
-        title,
-        style: const TextStyle(
-          fontSize: 17,
-          fontWeight: FontWeight.w700,
-          color: ink,
+      Builder(
+        builder: (context) => Text(
+          title,
+          style: Theme.of(context).textTheme.titleMedium,
         ),
       ),
       const SizedBox(height: 16),
       ...rows,
-      const Divider(height: 32, color: Color(0xFFDCD5C8)),
+      const Divider(height: 40, color: Color(0xFFDCD5C8)),
     ],
   );
 
@@ -51,12 +49,7 @@ class MinimalNotes extends StatelessWidget {
             Expanded(
               child: Text(
                 note.title,
-                style: const TextStyle(
-                  fontSize: 28,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: -.5,
-                  color: ink,
-                ),
+                style: Theme.of(context).textTheme.headlineMedium,
               ),
             ),
             PopupMenuButton<String>(
@@ -76,12 +69,12 @@ class MinimalNotes extends StatelessWidget {
             padding: const EdgeInsets.only(top: 6),
             child: Text(
               source,
-              style: const TextStyle(fontSize: 12, color: Colors.black54),
+              style: Theme.of(context).textTheme.bodySmall,
             ),
           ),
         const SizedBox(height: 28),
         if (note.summary.isNotEmpty) ...[
-          Text(note.summary, style: const TextStyle(height: 1.55)),
+          Text(note.summary, style: Theme.of(context).textTheme.bodyLarge),
           const Divider(height: 32),
         ],
         if (note.points.isNotEmpty)
@@ -92,10 +85,10 @@ class MinimalNotes extends StatelessWidget {
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('• ', style: TextStyle(height: 1.55)),
+                    Text('• ', style: Theme.of(context).textTheme.bodyLarge),
                     const SizedBox(width: 8),
                     Expanded(
-                      child: Text(p, style: const TextStyle(height: 1.55)),
+                      child: Text(p, style: Theme.of(context).textTheme.bodyLarge),
                     ),
                   ],
                 ),
@@ -119,7 +112,7 @@ class MinimalNotes extends StatelessWidget {
                     ),
                     const SizedBox(width: 12),
                     Expanded(
-                      child: Text(a, style: const TextStyle(height: 1.55)),
+                      child: Text(a, style: Theme.of(context).textTheme.bodyLarge),
                     ),
                   ],
                 ),
@@ -153,7 +146,7 @@ class MinimalNotes extends StatelessWidget {
         const SizedBox(height: 16),
         const Text(
           'Check extracts against the transcript.',
-          style: TextStyle(fontSize: 11, color: Colors.black54),
+          style: TextStyle(fontSize: 12, color: Colors.black54),
         ),
         if (showActions) ...[
           const SizedBox(height: 20),
@@ -177,7 +170,7 @@ class MinimalNotes extends StatelessWidget {
           const SizedBox(height: 12),
           Text(
             saveStatus,
-            style: const TextStyle(fontSize: 11, color: Colors.black54),
+            style: const TextStyle(fontSize: 12, color: Colors.black54),
           ),
         ],
         const SizedBox(height: 24),

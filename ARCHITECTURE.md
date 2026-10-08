@@ -6,7 +6,7 @@ Status: September 2026. Flutter app (Android + web on Vercel), local-first.
 
 ```
 Mic -> speech_to_text (Android, or web Device speech)
-   or web/whisper.js (web, Whisper tiny.en via transformers.js, local) -> editable transcript
+   or web/whisper.js (web, Whisper tiny (multilingual) via transformers.js, local) -> editable transcript
                                    |
                   +----------------+-----------------+
                   |                                  |

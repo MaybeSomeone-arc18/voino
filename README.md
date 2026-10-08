@@ -24,7 +24,7 @@ Speak or type ──► editable transcript ──► notes ──► visual boa
 
 ### Capture
 - **Android:** the device's speech recognizer (`speech_to_text`).
-- **Web:** choose **Whisper (local)** or **Device speech**. Whisper runs `whisper-tiny.en` in your browser (about 40 MB, downloaded once and cached, audio never leaves your machine). It is the default when the browser has no speech recognizer of its own.
+- **Web:** choose **Whisper (local)** or **Device speech**. Whisper runs multilingual `whisper-tiny` (Hindi + English, auto-detected) in your browser (about 40 MB, downloaded once and cached, audio never leaves your machine). It is the default when the browser has no speech recognizer of its own.
 - **Type or paste** always works. Typed text is never presented as recognized speech.
 - **Clear all** wipes the transcript, notes, board and any active recording in one tap.
 

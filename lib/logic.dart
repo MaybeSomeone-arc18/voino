@@ -68,14 +68,26 @@ class Note {
 final _action = RegExp(
     r'\b(?:need to|have to|should|must|remember to|assignment|deadline|submit|send|finish|prepare|review|complete|due)\b',
     caseSensitive: false);
+
+/// Hindi (Devanagari) and romanized Hinglish action cues. Devanagari has no \b word
+/// boundary in Dart, so those cues are matched as plain substrings.
+final _actionHindi = RegExp(
+    r'(?:करना है|करना होगा|करना पड़ेगा|करना चाहिए|भेजना है|भेजना होगा|जमा करना|पूरा करना|याद रखना|ज़रूर|जरूर|आखिरी तारीख|डेडलाइन|असाइनमेंट|सबमिट|तैयार करना)'
+    r'|\b(?:karna hai|karna hoga|karna padega|karna chahiye|karni hai|karni hogi|bhejna hai|bhejna hoga|bhejni hai|jama karna|submit karna|complete karna|finish karna|yaad rakhna|zaroor|zarur|jaruri|zaruri|deadline|assignment)\b',
+    caseSensitive: false);
+bool isActionSentence(String s)=> _isAction(s);
+bool _isAction(String s) => _action.hasMatch(s) || _actionHindi.hasMatch(s);
 final _filler = RegExp(r'^(?:(?:um+|uh+|er+|okay|ok|so|well|like|right|anyway|you know|i mean)\b[,\s]*)+', caseSensitive: false);
-final _word = RegExp(r"[a-z][a-z']{2,}");
+final _word = RegExp(r"[a-z][a-z']{2,}|[\u0900-\u097F]{2,}");
 const _stop = {
   'the', 'and', 'that', 'this', 'with', 'for', 'are', 'was', 'were', 'have', 'has', 'had', 'you', 'your', 'not', 'but',
   'can', 'will', 'would', 'could', 'should', 'from', 'they', 'them', 'their', 'there', 'then', 'than', 'which', 'what',
   'when', 'where', 'who', 'how', 'why', 'its', 'our', 'out', 'about', 'into', 'over', 'also', 'just', 'some', 'any',
   'all', 'one', 'more', 'most', 'very', 'been', 'being', 'does', 'did', 'because', 'these', 'those', 'such', 'each',
   'like', 'get', 'got', 'going', 'know', 'think', 'really', 'want', 'need', 'make', 'use', 'used', 'using', 'thing',
+  // Common Hindi / Hinglish function words.
+  'है', 'हैं', 'था', 'थे', 'थी', 'और', 'का', 'की', 'के', 'को', 'में', 'से', 'पर', 'यह', 'वह', 'कि', 'तो', 'भी', 'नहीं', 'एक', 'ये', 'वो', 'हम', 'आप', 'मैं', 'क्या', 'कर', 'रहा', 'रही', 'रहे', 'हो', 'होगा',
+  'hai', 'hain', 'tha', 'thi', 'aur', 'ka', 'ki', 'ke', 'ko', 'mein', 'main', 'se', 'par', 'yeh', 'woh', 'ye', 'wo', 'toh', 'bhi', 'nahi', 'nahin', 'hum', 'aap', 'kya', 'kar', 'raha', 'rahi', 'rahe', 'hoga', 'hogi', 'liye', 'abhi', 'bas', 'matlab', 'acha', 'accha', 'haan',
   'things', 'lot', 'much', 'many', 'now', 'here', 'yeah', 'okay', 'well', 'still', 'even', 'only', 'other', 'while',
 };
 
@@ -91,7 +103,7 @@ Note makeNotes(String transcript, [String title = 'New note']) {
   final t = cleanSpeech(title).isEmpty ? 'New note' : cleanSpeech(title);
   if (src.isEmpty) return Note(t, [], [], '');
 
-  var sentences = RegExp(r'[^.!?]+[.!?]?')
+  var sentences = RegExp(r'[^.!?।]+[.!?।]?')
       .allMatches(src)
       .map((m) => _capitalize(m.group(0)!.trim().replaceFirst(_filler, '').trim()))
       .where((s) => s.isNotEmpty)
@@ -99,7 +111,7 @@ Note makeNotes(String transcript, [String title = 'New note']) {
   final long = sentences.where((s) => s.split(' ').length >= 3).toList();
   if (long.isNotEmpty) sentences = long;
 
-  final actions = {...sentences.where(_action.hasMatch)}.toList();
+  final actions = {...sentences.where(_isAction)}.toList();
   final candidates = {...sentences.where((s) => !actions.contains(s))}.toList();
 
   final freq = <String, int>{};

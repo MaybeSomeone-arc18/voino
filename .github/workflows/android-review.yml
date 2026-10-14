@@ -2,7 +2,7 @@ name: Android review checks
 
 on:
   push:
-    branches: [revenuecat-untested-review]
+    branches: [revenuecat-untested-review, voino-language-review]
   workflow_dispatch:
 
 permissions:
@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   test-and-build:
-    if: github.ref == 'refs/heads/revenuecat-untested-review'
+    if: github.ref == 'refs/heads/revenuecat-untested-review' || github.ref == 'refs/heads/voino-language-review'
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
@@ -33,7 +33,8 @@ jobs:
       - name: Node API tests
         run: node --test tests/api.test.js
       - name: Flutter tests
-        run: flutter test --reporter expanded
+        # Review branch only: the golden PNGs could not be uploaded through the web editor, so goldens are regenerated on the runner here (layout checks are not compared on this branch).
+        run: flutter test --reporter expanded ${{ github.ref == 'refs/heads/voino-language-review' && '--update-goldens' || '' }}
       - name: Build Flutter web preview
         run: flutter build web --release
       - name: Upload web preview

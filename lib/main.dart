@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:speech_to_text/speech_to_text.dart';
+import 'device_speech.dart';
 import 'board.dart';
 import 'board_controller.dart';
 import 'board_view.dart';
@@ -54,6 +55,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
   final title = TextEditingController(), transcript = TextEditingController();
   final speech = SpeechToText();
   bool speechReady = false, listening = false, busy = false;
+  late final DeviceSpeech deviceSpeech = DeviceSpeech(speech);
   Settings settings = Settings();
   // device | whisper | gemini. Gemini (through the Voino server, free tier) is the default on web.
   String engine = (kIsWeb && WhisperEngine.supported) ? 'gemini' : 'device';
@@ -95,6 +97,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
             partialResults: true,
             cancelOnError: true,
             listenMode: ListenMode.dictation,
+            localeId: deviceSpeech.localeIdFor(settings.speechLang),
           ),
         );
       },
@@ -111,7 +114,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     Settings.load().then((v) {
       if (mounted) setState(() => settings = v);
     });
-    speech
+    deviceSpeech
         .initialize(
           onStatus: deviceSession.status,
           onError: (e) {
@@ -944,8 +947,8 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                 ),
               ),
               const SizedBox(height: 4),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
+              Wrap(
+                alignment: WrapAlignment.center,
                 children: [
                   TextButton(
                     onPressed: () => setState(() => view = 'notes'),
@@ -1084,6 +1087,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     final keys = TextEditingController(text: settings.keys.join('\n'));
     var use = settings.useAi;
     var proxy = settings.useProxy;
+    var lang = settings.speechLang;
     String? result;
     List<String> parse() => keys.text
         .split('\n')
@@ -1094,12 +1098,43 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
       context: context,
       builder: (d) => StatefulBuilder(
         builder: (d, setD) => AlertDialog(
-          title: const Text('Gemini (optional)'),
+          title: const Text('Settings'),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                if (!kIsWeb) ...[
+                  DropdownButtonFormField<String>(
+                    isExpanded: true,
+                    initialValue: lang,
+                    decoration: const InputDecoration(
+                      labelText: 'Listening language',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: const [
+                      DropdownMenuItem(
+                        value: 'auto',
+                        child: Text('Phone default'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'hi_IN',
+                        child: Text('Hindi (India)'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'en_IN',
+                        child: Text('English (India)'),
+                      ),
+                    ],
+                    onChanged: (v) => setD(() => lang = v ?? 'auto'),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Used by your phone\'s speech recognizer. If your choice is not offered, the closest language or the phone default is used.',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 const Text(
                   'Voino works fully offline with local notes. Add your own Gemini API key(s) for AI summaries. '
                   'One key per line; Voino rotates through them. Keys stay on this device and are sent only to Google.',
@@ -1170,6 +1205,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                   settings.keys = list;
                   settings.useAi = use && list.isNotEmpty;
                   settings.useProxy = proxy;
+                  settings.speechLang = lang;
                 });
                 persistSettings();
                 Navigator.pop(d);

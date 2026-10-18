@@ -33,7 +33,7 @@ Speak or type ──► editable transcript ──► notes ──► visual boa
 
 ### Capture
 - **Android:** the device's speech recognizer (`speech_to_text`).
-- **Web:** choose **Whisper (local)** or **Device speech**. Whisper runs multilingual `whisper-tiny` (Hindi + English, auto-detected) in your browser (about 40 MB, downloaded once and cached, audio never leaves your machine). It is the default when the browser has no speech recognizer of its own.
+- **Web:** three modes: **Cloud** (the browser's own speech service, starts instantly, the default), **On-device** (multilingual `whisper-tiny`, Hindi + English auto-detected, about 40 MB downloaded once and cached, audio never leaves your machine) and **Gemini** (audio goes to Google through the Voino server, free tier with limits). On-device Whisper takes over automatically when the browser has no speech recognizer of its own. If the microphone is blocked, Voino says so in plain words instead of showing a raw error.
 - **Type or paste** always works. Typed text is never presented as recognized speech.
 - **Clear all** wipes the transcript, notes, board and any active recording in one tap.
 

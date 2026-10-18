@@ -136,11 +136,11 @@ class _AskNotesSheetState extends State<AskNotesSheet> {
   String errorText = '';
   bool micOk = true;
   Room? _room;
-  StreamSubscription<RoomEvent>? _events;
+  Future<void> Function()? _cancelEvents;
 
   @override
   void dispose() {
-    _events?.cancel();
+    _cancelEvents?.call();
     _room?.disconnect();
     _room?.dispose();
     super.dispose();
@@ -156,7 +156,7 @@ class _AskNotesSheetState extends State<AskNotesSheet> {
           await startAskSession(Uri.base.resolve('/api/vaani-dispatch'), widget.note);
       final room = Room();
       _room = room;
-      _events = room.events.listen((event) async {
+      _cancelEvents = room.events.listen((event) async {
         if (event is TrackSubscribedEvent && event.track is RemoteAudioTrack) {
           // Web needs an explicit start for remote audio playback.
           try {

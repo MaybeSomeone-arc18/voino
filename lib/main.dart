@@ -17,6 +17,7 @@ import 'engine_switch.dart';
 import 'logic.dart';
 import 'app_theme.dart';
 import 'glass.dart';
+import 'ask_notes.dart';
 import 'minimal_notes.dart';
 import 'listening_session.dart';
 import 'local_draft.dart';
@@ -741,6 +742,15 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              SizedBox(
+                width: double.infinity,
+                child: GlassButton(
+                  label: 'Ask your notes',
+                  ink: ink,
+                  onPressed: () => AskNotesSheet.show(context, currentNote()),
+                ),
+              ),
+              const SizedBox(height: 10),
               Row(
                 children: [
                   Expanded(

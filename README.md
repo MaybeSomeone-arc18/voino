@@ -6,6 +6,15 @@ Built with Flutter for **Android** and the **web**. Local-first: notes work with
 
 > **Status: prototype.** Latest completed review baseline passed 60 Flutter tests and 12 Node tests; CI built a release web preview and Android debug Test Store APK. New mobile board/settings fixes are under review tests. Physical Android speech, storage and purchase acceptance are still pending. Main/site may lag the review branch. Production signing and live billing are not complete. See [Known limitations](#known-limitations).
 
+## Ask your notes (voice Q&A)
+
+Talk to your notes by voice (Hindi, English or a mix) through [Vaani](https://vaaniresearch.com) voice agents.
+
+- Per-session consent names the third-party voice service and lists exactly what leaves the device: the note title, key points and action items as text, plus your voice while you talk. The raw transcript is never sent.
+- The Vaani API key lives only in server environment variables (`VAANI_API_KEY`, optional `VAANI_AGENT_ID`) on `api/vaani-dispatch.js`; it never reaches the client.
+- Each session injects the notes into a fenced `NOTES_START`/`NOTES_END` data block in the agent prompt; note text that tries to forge the fence is neutralized, and the agent answers only from the notes (it says it does not know otherwise).
+- Sessions run over WebRTC (LiveKit): the server route starts the session, the app connects with `livekit_client`.
+
 ## How it works
 
 ```

@@ -38,6 +38,27 @@ class VoinoApp extends StatelessWidget {
   );
 }
 
+/// Plain-language note for the common microphone failures, so a first-time
+/// visitor is not left staring at a raw error code.
+String friendlyMicNote(String raw) {
+  final e = raw.toLowerCase();
+  if (e.contains('not-allowed') ||
+      e.contains('not_allowed') ||
+      e.contains('notallowed') ||
+      e.contains('denied') ||
+      e.contains('blocked')) {
+    return 'Microphone is blocked. Allow it for this site (lock icon in the browser address bar), then tap the mic again. Typing also works.';
+  }
+  if (e.contains('audio-capture') ||
+      e.contains('audio_capture') ||
+      e.contains('microphone_unavailable') ||
+      e.contains('no microphone') ||
+      e.contains('notfound')) {
+    return 'No microphone answered. Check that a mic is connected and allowed for this site, then tap again. Typing also works.';
+  }
+  return raw;
+}
+
 const idleStatus =
     'Stop listening or tap Make editable board to create your cards.';
 
@@ -56,8 +77,10 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
   final speech = SpeechToText();
   bool speechReady = false, listening = false, busy = false;
   Settings settings = Settings();
-  // device | whisper | gemini. Gemini (through the Voino server, free tier) is the default on web.
-  String engine = (kIsWeb && WhisperEngine.supported) ? 'gemini' : 'device';
+  // device | whisper | gemini. Cloud speech (the browser's own service) is the
+  // default on web: it starts instantly, with no model download and no Gemini
+  // free-tier quota spent. On-device Whisper and Gemini stay one tap away.
+  String engine = 'device';
   bool get _webAsr => engine == 'whisper' || engine == 'gemini';
   int engineSwitches = 0; // bumps the mic animation on each switch
   bool _fellBackToLocal = false;
@@ -118,7 +141,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
           onError: (e) {
             deviceSession.error(e.errorMsg);
             if (!deviceSession.requested && mounted)
-              _msg(deviceSession.message);
+              _msg(friendlyMicNote(deviceSession.message));
           },
         )
         .then((ok) {
@@ -177,7 +200,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     if (mounted && engine == 'device') {
       setState(() {
         listening = deviceSession.requested;
-        micNote = deviceSession.message;
+        micNote = friendlyMicNote(deviceSession.message);
       });
       // Cloud speech is unreachable: switch to on-device Whisper and start it.
       if (kIsWeb &&
@@ -353,11 +376,14 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
       );
     } catch (e) {
       if (mounted) {
+        final raw = '$e'.replaceFirst('Exception: ', '');
+        final friendly = friendlyMicNote(raw);
         setState(() {
           listening = false;
-          micNote = '';
+          micNote = friendly == raw
+              ? '$raw Try the Cloud mode or type instead.'
+              : friendly;
         });
-        _msg('Whisper could not start: $e. Try Device speech or type instead.');
       }
     }
   }

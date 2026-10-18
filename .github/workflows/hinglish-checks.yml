@@ -2,7 +2,7 @@ name: Hinglish branch checks
 
 on:
   push:
-    branches: [hinglish-multilingual, vaani-ask-notes]
+    branches: [hinglish-multilingual, vaani-ask-notes, cloud-default-mic-msg]
   workflow_dispatch:
 
 permissions:
@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   test-and-build:
-    if: github.ref == 'refs/heads/hinglish-multilingual' || github.ref == 'refs/heads/vaani-ask-notes'
+    if: github.ref == 'refs/heads/hinglish-multilingual' || github.ref == 'refs/heads/vaani-ask-notes' || github.ref == 'refs/heads/cloud-default-mic-msg'
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:

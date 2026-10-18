@@ -290,9 +290,20 @@ async function start(onText, onProgress, onError, onPartial, onStats) {
   onProgress(0);
   const asr = await loadModel(onProgress); // lazy: first call downloads and caches the model
   onProgress(100);
-  stream = await navigator.mediaDevices.getUserMedia({
-    audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
-  });
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+    });
+  } catch (e) {
+    const name = (e && e.name) || '';
+    if (name === 'NotAllowedError' || name === 'SecurityError')
+      throw new Error('Microphone is blocked. Allow it for this site (lock icon in the browser address bar), then tap the mic again.');
+    if (name === 'NotFoundError' || name === 'OverconstrainedError')
+      throw new Error('No microphone found on this device. You can type instead.');
+    if (name === 'NotReadableError')
+      throw new Error('The microphone is busy in another app. Close that app and try again.');
+    throw e;
+  }
   audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: RATE });
   source = audioCtx.createMediaStreamSource(stream);
   resetSegment();

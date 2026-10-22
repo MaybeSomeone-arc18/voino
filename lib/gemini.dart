@@ -101,7 +101,7 @@ Note noteFromGeminiJson(Map<String, dynamic> j, String transcript, String fallba
 
 /// Calls Gemini directly with user-supplied keys, rotating to the next key on any failure.
 class GeminiClient {
-  GeminiClient(List<String> keys, {http.Client? client, this.model = 'gemini-2.5-flash'})
+  GeminiClient(List<String> keys, {http.Client? client, this.model = 'gemini-3.5-flash'})
       : keys = keys.map((k) => k.trim()).where((k) => k.isNotEmpty).toList(),
         _client = client ?? http.Client();
   final List<String> keys;

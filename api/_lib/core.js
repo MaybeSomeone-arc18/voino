@@ -3,7 +3,10 @@
 
 const MAX_TRANSCRIPT = 12000;
 const MAX_BODY_BYTES = 64 * 1024;
-const DEFAULT_MODEL = 'gemini-2.5-flash';
+const DEFAULT_MODEL = 'gemini-3.5-flash';
+// Tried in order after the default/env model when it is rejected or unavailable;
+// free-tier quotas are per model, so a fallback also absorbs a busy default.
+const FALLBACK_MODELS = ['gemini-3.5-flash-lite', 'gemini-2.5-flash'];
 const ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 const PROMPT =
@@ -158,7 +161,7 @@ function validate(raw, transcript) {
 }
 
 // ---- Gemini call --------------------------------------------------------
-async function summarize(transcript, { keys, fetchImpl = fetch, model = DEFAULT_MODEL, timeoutMs = 25000 }) {
+async function summarizeOnce(transcript, { keys, fetchImpl = fetch, model = DEFAULT_MODEL, timeoutMs = 25000 }) {
   const body = JSON.stringify({
     systemInstruction: { parts: [{ text: PROMPT }] },
     contents: [{ role: 'user', parts: [{ text: transcript }] }],
@@ -189,9 +192,33 @@ async function summarize(transcript, { keys, fetchImpl = fetch, model = DEFAULT_
         throw new HttpError(502, 'bad_model_output');
       }
     }
-    if (!shouldRotate(res.status)) throw new HttpError(502, 'upstream_rejected');
+    if (!shouldRotate(res.status)) {
+      const e = new HttpError(502, 'upstream_rejected');
+      e.upstreamStatus = res.status;
+      throw e;
+    }
   }
   throw new HttpError(lastStatus === 429 ? 429 : 503, lastStatus === 429 ? 'quota_exhausted' : 'upstream_unavailable');
+}
+
+/// Tries each model in turn (key rotation happens inside each model). A model
+/// that is retired, rejected or busy falls through to the next; a quota error
+/// on every model still reports quota.
+async function summarize(transcript, { keys, fetchImpl = fetch, model = DEFAULT_MODEL, timeoutMs = 25000 } = {}) {
+  const chain = [model, ...FALLBACK_MODELS.filter((m) => m !== model)];
+  let last = null, quota = null;
+  for (const m of chain) {
+    try {
+      return await summarizeOnce(transcript, { keys, fetchImpl, model: m, timeoutMs });
+    } catch (e) {
+      // A malformed request fails on every model; anything else (retired or
+      // busy model, key or quota trouble) may still work on the next one.
+      if (e.upstreamStatus === 400) throw e;
+      if (e.status === 429 && !quota) quota = e;
+      last = e;
+    }
+  }
+  throw quota || last || new HttpError(503, 'upstream_unavailable');
 }
 
 // ---- rate limiting (best effort: per serverless instance) ----------------
@@ -255,5 +282,5 @@ function makeHandler({ env = process.env, fetchImpl = fetch, limiter = createRat
 }
 
 module.exports = {
-  MAX_TRANSCRIPT, SCHEMA, HttpError, keyOrder, parseKeys, shouldRotate, validate, summarize, createRateLimiter, makeHandler, _setCursor,
+  MAX_TRANSCRIPT, SCHEMA, HttpError, keyOrder, parseKeys, shouldRotate, validate, summarize, summarizeOnce, createRateLimiter, makeHandler, _setCursor,
 };

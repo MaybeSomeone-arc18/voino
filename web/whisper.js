@@ -417,7 +417,14 @@ function debugPanel() {
   };
   document.body.append(btn, box);
 }
-if (typeof document !== 'undefined') { if (document.body) debugPanel(); else window.addEventListener('DOMContentLoaded', debugPanel); }
+// Debug panel is developer-only: show it after visiting with ?debug=1 (sticks via localStorage).
+const debugEnabled = (() => {
+  try {
+    if (new URLSearchParams(location.search).get('debug') === '1') { localStorage.setItem('voinoDebug', '1'); return true; }
+    return localStorage.getItem('voinoDebug') === '1';
+  } catch (_) { return false; }
+})();
+if (debugEnabled && typeof document !== 'undefined') { if (document.body) debugPanel(); else window.addEventListener('DOMContentLoaded', debugPanel); }
 
 function setVocabulary(words) {
   vocab = (words || []).map(String);

@@ -33,14 +33,14 @@ Speak or type ──► editable transcript ──► notes ──► visual boa
 
 ### Capture
 - **Android:** the device's speech recognizer (`speech_to_text`).
-- **Web:** three modes: **Cloud** (the browser's own speech service, starts instantly, the default), **On-device** (multilingual `whisper-tiny`, Hindi + English auto-detected, about 40 MB downloaded once and cached, audio never leaves your machine) and **Gemini** (audio goes to Google through the Voino server, free tier with limits). On-device Whisper takes over automatically when the browser has no speech recognizer of its own. If the microphone is blocked, Voino says so in plain words instead of showing a raw error.
+- **Web:** three modes: **Cloud** (the browser's own speech service, starts instantly, the default), **On-device** (multilingual `whisper-tiny`, Hindi + English auto-detected, about 40 MB downloaded once and cached, audio never leaves your machine) and **Gemini** (audio goes to Google through the Voino server, free tier with limits). On-device Whisper takes over automatically when the browser has no speech recognizer of its own. If the microphone is blocked, Voino says so in plain words instead of showing a raw error. A listening-language choice (browser default, Hindi or English India) is in Settings.
 - **Type or paste** always works. Typed text is never presented as recognized speech.
 - **Clear all** wipes the transcript, notes, board and any active recording in one tap.
 
 ### Notes
-- **Local by default.** Removes filler words, ranks sentences by keyword weight, groups related points into topics, links neighbouring points and pulls out action items. It keeps your original wording and never invents content. It selects sentences; it does not rewrite them.
+- **Hosted AI notes by default on the web.** A Vercel function (`api/summarize.js`) turns the transcript into a summary, key points, topics and action items with server-side keys, so visitors need no key. The first use asks for consent, and every note says how it was made. If the server is unavailable or rate limited, Voino falls back to local notes.
+- **Local fallback, always.** The rule-based extractor removes filler words, ranks sentences by keyword weight, groups related points into topics, links neighbouring points and pulls out action items. It keeps your original wording and never invents content. It selects sentences; it does not rewrite them.
 - **Optional Gemini summaries with your own key.** Open settings, paste one or more API keys (one per line), switch it on and press *Test*. Voino rotates through your keys and falls back to local notes if a request fails. Keys are kept in secure storage on your device and go only to Google.
-- **Optional hosted summarizer.** A Vercel function (`api/summarize.js`) can summarize with server-side keys, so demo visitors need no key. It is off by default. Your own keys are tried first.
 - **Consent first.** Voino asks before a transcript leaves your device, separately for Gemini and for the hosted summarizer.
 
 ### Board
@@ -126,7 +126,8 @@ More detail: [ARCHITECTURE.md](ARCHITECTURE.md).
 
 - Notes, the board and the transcript stay on your device unless you turn on an AI option. Nothing is saved between sessions except settings, so save the board file to keep your work.
 - The device or browser speech recognizer may send audio to its vendor. Whisper on web does not.
-- Turning on Gemini or the hosted summarizer sends the transcript to Google (through Voino's server for the hosted option, which does not store it). Google's own terms apply.
+- Turning on Gemini or the hosted summarizer sends the transcript to Google (through Voino's server for the hosted option, which does not store it). On Google's free tier Google may use the data to improve its products. Google's own terms apply.
+- **Anonymous usage counters.** Voino counts listening sessions started, boards created, and devices active per day as anonymous "+1" increments in the project's own database. No device id, transcript, notes or board content is ever sent for counting; there is nothing to read back about any person. Counting failures never affect the app.
 - **Ask permission before recording other people.**
 
 ## Known limitations

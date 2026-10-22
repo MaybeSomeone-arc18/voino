@@ -179,3 +179,27 @@ String exportText(Note n) {
   b.write('\n\nOriginal transcript\n${n.transcript.isEmpty ? '(empty)' : n.transcript}\n');
   return b.toString();
 }
+
+/// Recognition-language choices offered for on-device listening.
+/// 'auto' keeps the phone's system default.
+const kSpeechLangChoices = ['auto', 'hi_IN', 'en_IN'];
+
+/// Resolves the user's recognition-language choice against the locales the
+/// device recognizer reports. 'auto', or a choice the device does not offer,
+/// returns null so the recognizer keeps its system default. Matching tolerates
+/// dash/underscore id styles; a language-only fallback (hi -> hi_IN) applies
+/// when the exact region id is absent.
+String? resolveSpeechLocale(String choice, Iterable<String> availableLocales) {
+  if (choice == 'auto' || !kSpeechLangChoices.contains(choice)) return null;
+  String norm(String id) => id.replaceAll('-', '_').toLowerCase();
+  final wanted = norm(choice);
+  for (final raw in availableLocales) {
+    if (norm(raw) == wanted) return raw;
+  }
+  final lang = wanted.split('_').first;
+  for (final raw in availableLocales) {
+    final id = norm(raw);
+    if (id == lang || id.startsWith('${lang}_')) return raw;
+  }
+  return null;
+}

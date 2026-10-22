@@ -68,7 +68,8 @@ void main() {
     await t.pump(const Duration(seconds: 2));
     expect(starts, 2);
     expect(s.requested, false);
-    expect(s.message, contains('error_network'));
+    expect(s.message, contains('network problem'));
+    expect(s.message, isNot(contains('error_network')));
     s.dispose();
   });
   testWidgets(
@@ -124,7 +125,8 @@ void main() {
     expect(s.active, false);
     await t.pump(const Duration(seconds: 4));
     expect(s.requested, false);
-    expect(s.message, contains('microphone_unavailable'));
+    expect(s.message, contains('microphone did not start'));
+    expect(s.message, isNot(contains('microphone_unavailable')));
     s.dispose();
   });
   testWidgets('background stop preserves transcript and does not auto resume', (
@@ -148,5 +150,22 @@ void main() {
     expect(s.requested, false);
     expect(s.message, contains('Paused'));
     s.dispose();
+  });
+
+  test('recognizer error messages are plain language, codes never shown', () {
+    expect(speechErrorMessage('error_network'), contains('network problem'));
+    expect(speechErrorMessage('error_audio'), contains('audio problem'));
+    expect(
+      speechErrorMessage('error_insufficient_permissions'),
+      contains('permission'),
+    );
+    expect(
+      speechErrorMessage('error_language_unsupported'),
+      contains('not available on this phone'),
+    );
+    expect(speechErrorMessage('error_client'), 'Speech stopped. Tap to try again or type instead.');
+    for (final code in ['error_network', 'error_audio', 'error_client', 'error_server', 'error_unknown_thing']) {
+      expect(speechErrorMessage(code), isNot(contains(code)));
+    }
   });
 }

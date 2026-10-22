@@ -76,6 +76,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
   late final ProAccess pro;
   final stats = Stats();
   bool _sessionCounted = false;
+  bool _autoRoutedToGemini = false;
   late final ListeningSession deviceSession;
   final title = TextEditingController(), transcript = TextEditingController();
   final speech = SpeechToText();
@@ -125,7 +126,10 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
             partialResults: true,
             cancelOnError: true,
             listenMode: ListenMode.dictation,
-            localeId: deviceSpeech.localeIdFor(settings.speechLang),
+            localeId: deviceSpeech.localeIdFor(settings.speechLang) ??
+                (kIsWeb
+                    ? defaultCloudLocale(deviceSpeech.availableLocales)
+                    : null),
           ),
         );
       },
@@ -135,6 +139,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
       onWords: (words, newSession) {
         if (mounted && words.trim().isNotEmpty) {
           setState(() => transcript.text = stitchSpeech(before, words));
+          _maybeRouteToGemini(words);
         }
       },
     );
@@ -201,6 +206,33 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
       view = 'notes';
     });
     restoringDraft = false;
+  }
+
+  /// The browser's English speech service mangles Hindi. When real
+  /// Devanagari comes back, move the session to the Gemini route, which the
+  /// Hinglish benchmark work showed is the strongest free option. Runs once
+  /// per session; a manual engine switch resets it.
+  void _maybeRouteToGemini(String words) {
+    if (_autoRoutedToGemini ||
+        !kIsWeb ||
+        !WhisperEngine.supported ||
+        engine != 'device' ||
+        !deviceSession.requested ||
+        !hasDevanagari(words)) {
+      return;
+    }
+    _autoRoutedToGemini = true;
+    Future(() async {
+      if (!mounted || engine != 'device') return;
+      await deviceSession.stop();
+      if (!mounted) return;
+      setState(() {
+        engine = 'gemini';
+        engineSwitches++;
+        micNote = 'Hindi detected: switched to Gemini, it hears Hinglish best.';
+      });
+      await toggleWhisper();
+    });
   }
 
   void _deviceChanged() {
@@ -532,6 +564,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
       micNote = '';
       status = idleStatus;
       view = 'listen';
+      _autoRoutedToGemini = false;
     });
     _draftChanged();
     await draft.flush();
@@ -935,6 +968,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                     engineSwitches++;
                     micNote = '';
                     _fellBackToLocal = false;
+                    _autoRoutedToGemini = false;
                   }),
                 ),
                 const SizedBox(height: 14),

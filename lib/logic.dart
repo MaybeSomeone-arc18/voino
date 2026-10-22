@@ -203,3 +203,13 @@ String? resolveSpeechLocale(String choice, Iterable<String> availableLocales) {
   }
   return null;
 }
+
+/// True when the text contains Devanagari (Hindi) characters. Used to route
+/// Hindi/Hinglish speech to the engine that handles it best.
+bool hasDevanagari(String text) => RegExp(r'[\u0900-\u097F]').hasMatch(text);
+
+/// Picks the browser-speech locale for the Cloud engine: Indian English when
+/// the browser offers it (the beta audience is Indian; en-IN recognizes both
+/// English and romanized Hindi well), otherwise the browser default (null).
+String? defaultCloudLocale(Iterable<String> availableLocales) =>
+    resolveSpeechLocale('en_IN', availableLocales);

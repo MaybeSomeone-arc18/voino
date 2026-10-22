@@ -28,5 +28,20 @@ void main() {
     test('a different region of the chosen language is the nearest fallback', () {
       expect(resolveSpeechLocale('en_IN', ['en_US', 'en_GB']), 'en_US');
     });
+
+    test('Devanagari detector catches Hindi, not English or romanized Hinglish', () {
+      expect(hasDevanagari('aaj \u0915\u094d\u092f\u093e \u0939\u0941\u0906'), isTrue);
+      expect(hasDevanagari('\u0928\u092e\u0938\u094d\u0924\u0947'), isTrue);
+      expect(hasDevanagari('kal meeting hai'), isFalse);
+      expect(hasDevanagari('plain english words'), isFalse);
+      expect(hasDevanagari(''), isFalse);
+    });
+    test('cloud default locale prefers en_IN when the browser offers it', () {
+      expect(defaultCloudLocale(['en_US', 'en_IN', 'hi_IN']), 'en_IN');
+      expect(defaultCloudLocale(['hi-IN', 'en-IN']), 'en-IN');
+      expect(defaultCloudLocale(['en_US', 'en_GB']), 'en_US');
+      expect(defaultCloudLocale(['hi_IN']), isNull);
+      expect(defaultCloudLocale([]), isNull);
+    });
   });
 }

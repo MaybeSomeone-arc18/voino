@@ -1,0 +1,56 @@
+rules_version = '2';
+
+// Voino Firestore rules (project: voinoo)
+//
+// The only client writes allowed anywhere are anonymous usage-counter
+// increments under counters/. Everything else stays owner-only (use the
+// Firebase console to read the numbers).
+//
+// Paste this file into Firebase console -> Firestore Database -> Rules,
+// or deploy with: firebase deploy --only firestore:rules
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function counterShape(data) {
+      return data.keys().hasOnly(['sessions', 'boards', 'devices', 'returning'])
+        && data.get('sessions', 0) is int
+        && data.get('boards', 0) is int
+        && data.get('devices', 0) is int
+        && data.get('returning', 0) is int
+        && data.get('sessions', 0) >= 0
+        && data.get('boards', 0) >= 0
+        && data.get('devices', 0) >= 0
+        && data.get('returning', 0) >= 0;
+    }
+
+    // Counters only ever go up, by at most 100 per write (a single app
+    // action adds 1; the cap leaves room for batched flushes).
+    function smallIncrease(field) {
+      return request.resource.data.get(field, resource.data.get(field, 0))
+             - resource.data.get(field, 0) >= 0
+        && request.resource.data.get(field, resource.data.get(field, 0))
+             - resource.data.get(field, 0) <= 100;
+    }
+
+    match /counters/{doc} {
+      allow read: if false;
+      allow create: if counterShape(request.resource.data)
+        && request.resource.data.get('sessions', 0) <= 100
+        && request.resource.data.get('boards', 0) <= 100
+        && request.resource.data.get('devices', 0) <= 100
+        && request.resource.data.get('returning', 0) <= 100;
+      allow update: if counterShape(request.resource.data)
+        && request.resource.data.diff(resource.data).changedKeys()
+             .hasOnly(['sessions', 'boards', 'devices', 'returning'])
+        && smallIncrease('sessions')
+        && smallIncrease('boards')
+        && smallIncrease('devices')
+        && smallIncrease('returning');
+      allow delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

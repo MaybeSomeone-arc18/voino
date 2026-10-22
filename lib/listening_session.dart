@@ -1,6 +1,27 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 
+/// Plain-language message for a platform recognizer error. Raw platform
+/// codes (error_network, error_client, ...) never reach the user.
+String speechErrorMessage(String error) {
+  switch (error) {
+    case 'error_network':
+    case 'error_network_timeout':
+      return 'Speech stopped: network problem. Tap to try again or type instead.';
+    case 'microphone_unavailable':
+      return 'Speech stopped: the microphone did not start. Tap to try again or type instead.';
+    case 'error_audio':
+      return 'Speech stopped: audio problem. Tap to try again or type instead.';
+    case 'error_insufficient_permissions':
+      return 'Speech stopped: microphone permission is off. Allow it, then tap to try again.';
+    case 'error_language_unsupported':
+    case 'error_language_not_supported':
+      return 'Speech stopped: that language is not available on this phone. Pick another in Settings, or type instead.';
+    default:
+      return 'Speech stopped. Tap to try again or type instead.';
+  }
+}
+
 /// Keeps user intent separate from the platform's short recognizer sessions.
 /// Restart gaps are visible; this is not gapless audio recording.
 class ListeningSession extends ChangeNotifier {
@@ -106,7 +127,7 @@ class ListeningSession extends ChangeNotifier {
       _token++;
       _restart?.cancel();
       _restart = null;
-      message = 'Speech stopped: $error. Tap to try again or type instead.';
+      message = speechErrorMessage(error);
       stopEngine().catchError((_) {});
     }
     _notify();

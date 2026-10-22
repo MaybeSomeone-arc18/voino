@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:speech_to_text/speech_to_text.dart';
+import 'device_speech.dart';
 import 'board.dart';
 import 'board_controller.dart';
 import 'board_view.dart';
@@ -24,6 +25,7 @@ import 'local_draft.dart';
 import 'pro_access.dart';
 import 'revenuecat_backend.dart';
 import 'live_transcript.dart';
+import 'stats.dart';
 
 void main() => runApp(const VoinoApp());
 
@@ -72,10 +74,14 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
   final draft = LocalDraft();
   bool draftTouched = false, restoringDraft = false;
   late final ProAccess pro;
+  final stats = Stats();
+  bool _sessionCounted = false;
+  bool _autoRoutedToGemini = false;
   late final ListeningSession deviceSession;
   final title = TextEditingController(), transcript = TextEditingController();
   final speech = SpeechToText();
   bool speechReady = false, listening = false, busy = false;
+  late final DeviceSpeech deviceSpeech = DeviceSpeech(speech);
   Settings settings = Settings();
   // device | whisper | gemini. Cloud speech (the browser's own service) is the
   // default on web: it starts instantly, with no model download and no Gemini
@@ -104,6 +110,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     board.addListener(_draftChanged);
     draft.addListener(_draftStatus);
     _restoreDraft();
+    stats.appOpened(); // anonymous +1 increments only; no content leaves
     pro = ProAccess(
       android: !kIsWeb && defaultTargetPlatform == TargetPlatform.android,
       backend: RevenueCatBackend(),
@@ -119,6 +126,10 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
             partialResults: true,
             cancelOnError: true,
             listenMode: ListenMode.dictation,
+            localeId: deviceSpeech.localeIdFor(settings.speechLang) ??
+                (kIsWeb
+                    ? defaultCloudLocale(deviceSpeech.availableLocales)
+                    : null),
           ),
         );
       },
@@ -128,20 +139,21 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
       onWords: (words, newSession) {
         if (mounted && words.trim().isNotEmpty) {
           setState(() => transcript.text = stitchSpeech(before, words));
+          _maybeRouteToGemini(words);
         }
       },
     );
     deviceSession.addListener(_deviceChanged);
-    Settings.load().then((v) {
+    Settings.load(proxyDefault: kIsWeb && defaultProxyUrl() != null).then((v) {
       if (mounted) setState(() => settings = v);
     });
-    speech
+    deviceSpeech
         .initialize(
           onStatus: deviceSession.status,
           onError: (e) {
             deviceSession.error(e.errorMsg);
             if (!deviceSession.requested && mounted)
-              _msg(friendlyMicNote(deviceSession.message));
+              _msg(deviceSession.message);
           },
         )
         .then((ok) {
@@ -196,11 +208,43 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     restoringDraft = false;
   }
 
+  /// The browser's English speech service mangles Hindi. When real
+  /// Devanagari comes back, move the session to the Gemini route, which the
+  /// Hinglish benchmark work showed is the strongest free option. Runs once
+  /// per session; a manual engine switch resets it.
+  void _maybeRouteToGemini(String words) {
+    if (_autoRoutedToGemini ||
+        !kIsWeb ||
+        !WhisperEngine.supported ||
+        engine != 'device' ||
+        !deviceSession.requested ||
+        !hasDevanagari(words)) {
+      return;
+    }
+    _autoRoutedToGemini = true;
+    Future(() async {
+      if (!mounted || engine != 'device') return;
+      await deviceSession.stop();
+      if (!mounted) return;
+      setState(() {
+        engine = 'gemini';
+        engineSwitches++;
+        micNote = 'Hindi detected: switched to Gemini, it hears Hinglish best.';
+      });
+      await toggleWhisper();
+    });
+  }
+
   void _deviceChanged() {
     if (mounted && engine == 'device') {
+      if (deviceSession.active && !_sessionCounted) {
+        _sessionCounted = true;
+        stats.sessionStarted();
+      }
+      if (!deviceSession.requested) _sessionCounted = false;
       setState(() {
         listening = deviceSession.requested;
-        micNote = friendlyMicNote(deviceSession.message);
+        micNote = deviceSession.message;
       });
       // Cloud speech is unreachable: switch to on-device Whisper and start it.
       if (kIsWeb &&
@@ -374,6 +418,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
           if (mounted) setState(() => whisperPartial = t);
         },
       );
+      stats.sessionStarted();
     } catch (e) {
       if (mounted) {
         final raw = '$e'.replaceFirst('Exception: ', '');
@@ -437,7 +482,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     if (useKeys && !settings.consented) {
       if (await confirm(
         'Send this transcript to Google Gemini using your API key to write a summary? '
-        'It leaves your device. Choose Cancel to skip it.',
+        'It leaves your device; on the free tier Google may use it to improve its products. Choose Cancel to skip it.',
       )) {
         settings.consented = true;
         await persistSettings();
@@ -448,7 +493,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     if (useProxy && !settings.proxyConsented) {
       if (await confirm(
         'Send this transcript to the Voino server, which forwards it to Google Gemini to write a summary? '
-        'It leaves your device; the server does not keep it. Choose Cancel to skip it.',
+        'It leaves your device; the server does not keep it. On the free tier Google may use it to improve its products. Choose Cancel to skip it.',
       )) {
         settings.proxyConsented = true;
         await persistSettings();
@@ -481,6 +526,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
   }
 
   void _apply(Note n, String src, String how) {
+    stats.boardCreated();
     board.replace(buildBoard(n));
     setState(() {
       summary = n.summary;
@@ -518,6 +564,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
       micNote = '';
       status = idleStatus;
       view = 'listen';
+      _autoRoutedToGemini = false;
     });
     _draftChanged();
     await draft.flush();
@@ -921,6 +968,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                     engineSwitches++;
                     micNote = '';
                     _fellBackToLocal = false;
+                    _autoRoutedToGemini = false;
                   }),
                 ),
                 const SizedBox(height: 14),
@@ -980,8 +1028,8 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                 ),
               ),
               const SizedBox(height: 4),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
+              Wrap(
+                alignment: WrapAlignment.center,
                 children: [
                   TextButton(
                     onPressed: () => setState(() => view = 'notes'),
@@ -1120,6 +1168,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     final keys = TextEditingController(text: settings.keys.join('\n'));
     var use = settings.useAi;
     var proxy = settings.useProxy;
+    var lang = settings.speechLang;
     String? result;
     List<String> parse() => keys.text
         .split('\n')
@@ -1130,12 +1179,43 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
       context: context,
       builder: (d) => StatefulBuilder(
         builder: (d, setD) => AlertDialog(
-          title: const Text('Gemini (optional)'),
+          title: const Text('Settings'),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                DropdownButtonFormField<String>(
+                  isExpanded: true,
+                  initialValue: lang,
+                  decoration: const InputDecoration(
+                    labelText: 'Listening language',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: [
+                    DropdownMenuItem(
+                      value: 'auto',
+                      child: Text(kIsWeb ? 'Browser default' : 'Phone default'),
+                    ),
+                    const DropdownMenuItem(
+                      value: 'hi_IN',
+                      child: Text('Hindi (India)'),
+                    ),
+                    const DropdownMenuItem(
+                      value: 'en_IN',
+                      child: Text('English (India)'),
+                    ),
+                  ],
+                  onChanged: (v) => setD(() => lang = v ?? 'auto'),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  kIsWeb
+                      ? 'Used by the browser\'s speech recognizer in Cloud mode. If your choice is not offered, the closest language or the browser default is used.'
+                      : 'Used by your phone\'s speech recognizer. If your choice is not offered, the closest language or the phone default is used.',
+                  style: const TextStyle(fontSize: 12),
+                ),
+                const SizedBox(height: 12),
                 const Text(
                   'Voino works fully offline with local notes. Add your own Gemini API key(s) for AI summaries. '
                   'One key per line; Voino rotates through them. Keys stay on this device and are sent only to Google.',
@@ -1206,6 +1286,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                   settings.keys = list;
                   settings.useAi = use && list.isNotEmpty;
                   settings.useProxy = proxy;
+                  settings.speechLang = lang;
                 });
                 persistSettings();
                 Navigator.pop(d);

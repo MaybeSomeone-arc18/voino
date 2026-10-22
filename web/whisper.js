@@ -19,8 +19,9 @@ let variant = (() => { try { const v = localStorage.getItem('voinoAsr'); return 
 const asrPromises = {};
 const RATE = 16000;
 const STEP_MS = 700; // how often a partial update is attempted (skipped while a decode is running)
-const PAUSE_MS = 500; // silence that ends a segment
+const PAUSE_MS = 400; // silence that ends a segment
 const MAX_SEG_S = 8; // long monologues are split at the quietest point instead of growing
+const MAX_SEG_S_CLOUD = 5; // cloud decodes only on finals, so split sooner to keep text feeling live
 const PRE_ROLL = 3; // frames (about 0.4 s) kept from before speech starts so first syllables survive
 const MIN_SECONDS = 0.5;
 const SILENCE_RMS = 0.004;
@@ -245,7 +246,7 @@ async function tick(asr, cb, force = false) {
   }
   if (!speechSamples) { resetSegment(); return; }
   const paused = performance.now() - lastSpeechAt > PAUSE_MS;
-  const tooLong = segSamples > RATE * MAX_SEG_S;
+  const tooLong = segSamples > RATE * (VARIANTS[variant].cloud ? MAX_SEG_S_CLOUD : MAX_SEG_S);
   const isFinal = force || paused || tooLong;
   // Frames to decode: all of them, minus trailing silence on a pause; up to the quietest frame on a forced split.
   let take = seg.length;

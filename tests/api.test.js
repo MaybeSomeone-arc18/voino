@@ -182,3 +182,25 @@ test('handler rejects non-string and oversized raw payload without trusting cont
  }
  const res=fakeRes();await handler({method:'POST',headers:{},body:JSON.stringify({transcript:'hi',unused:'x'.repeat(70000)})},res);assert.equal(res.code,413);assert.equal(calls,0);
 });
+
+test('a retired model (404) falls through to the fallback model', async () => {
+  core._setCursor(0);
+  const seen = [];
+  const fetchImpl = async (url) => {
+    seen.push(String(url));
+    if (String(url).includes('gemini-3.5-flash:')) return status(404);
+    return okResponse();
+  };
+  const out = await core.summarize(TRANSCRIPT, { keys: ['a'], fetchImpl });
+  assert.ok(out.points.length);
+  assert.equal(seen.length, 2);
+  assert.ok(seen[1].includes('gemini-3.5-flash-lite'));
+});
+
+test('quota on every model still reports quota', async () => {
+  core._setCursor(0);
+  await assert.rejects(
+    core.summarize(TRANSCRIPT, { keys: ['a'], fetchImpl: async () => status(429) }),
+    (e) => e.status === 429 && e.code === 'quota_exceeded' || e.code === 'quota_exhausted'
+  );
+});

@@ -2,7 +2,7 @@ name: Hinglish branch checks
 
 on:
   push:
-    branches: [hinglish-multilingual, vaani-ask-notes]
+    branches: [hinglish-multilingual, vaani-ask-notes, web-first-beta]
   workflow_dispatch:
 
 permissions:
@@ -14,7 +14,6 @@ concurrency:
 
 jobs:
   test-and-build:
-    if: github.ref == 'refs/heads/hinglish-multilingual' || github.ref == 'refs/heads/vaani-ask-notes'
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
@@ -25,7 +24,7 @@ jobs:
           java-version: '17'
       - uses: subosito/flutter-action@4cab68ce0f1c7c924f688bff4792e044f1aeb30c
         with:
-          flutter-version: '3.44.7'
+          flutter-version: '3.47.7'
           channel: stable
           cache: true
       - name: Resolve dependencies

@@ -7,11 +7,11 @@
 // (or the segment reaches MAX_SEG_S) the segment is transcribed once more and committed as FINAL.
 const TRANSFORMERS = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1/dist/transformers.min.js';
 // Local engines. 'multi' is the stock multilingual tiny (MIT). 'hinglish' is a Hinglish fine-tune of
-// whisper-tiny (abhishekgautamm/whisper-tiny-hinglish, NO LICENSE STATED on its page) converted to ONNX
-// and hosted with this app. It is TEST ONLY: never the default, do not ship until the author adds a license.
+// whisper-tiny (abhishekgautamm/whisper-tiny-hinglish, MIT - credit Abhishek Gautam and the MUCS
+// dataset), converted to quantized ONNX and lazy-loaded from huggingface.co on first use.
 const VARIANTS = {
   multi: { label: 'Stock tiny (MIT)', model: 'Xenova/whisper-tiny', lang: 'hi' },
-  hinglish: { label: 'Hinglish tiny (test only)', model: 'hinglish', local: true, lang: null },
+  hinglish: { label: 'Hinglish tiny (MIT)', model: 'MaybeSomeone19/whisper-tiny-hinglish-onnx', lang: null },
   gemini: { label: 'Gemini (cloud, free tier)', cloud: true, lang: null },
   vaani: { label: 'Vaani Hindi tiny (Apache-2.0)', model: 'vaani', local: true, lang: 'hi' },
 };
@@ -398,7 +398,7 @@ function debugPanel() {
   for (const o of sel.options) isInstalled(o.value).then((ok) => { if (!ok) { o.textContent += ' - not installed'; o.disabled = true; if (sel.value === o.value) { setVariant('multi'); sel.value = 'multi'; } } });
   sel.onchange = () => { if (running) { sel.value = variant; alert('Stop listening first, then switch model.'); return; } setVariant(sel.value); };
   const note = document.createElement('div');
-  note.textContent = 'Hinglish tiny has no stated license: test only. Switch model while not listening.';
+  note.textContent = 'Switch model while not listening.';
   note.style.opacity = '.7';
   const rows = document.createElement('div');
   const vin = document.createElement('input');

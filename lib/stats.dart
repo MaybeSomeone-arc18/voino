@@ -24,7 +24,10 @@ const defaultProjectId = String.fromEnvironment(
   'VOINO_FIREBASE_PROJECT',
   defaultValue: 'voinoo',
 );
-const defaultApiKey = String.fromEnvironment('VOINO_FIREBASE_API_KEY');
+const defaultApiKey = String.fromEnvironment(
+  'VOINO_FIREBASE_API_KEY',
+  defaultValue: 'AIzaSyBhL3QPXjoYZDGg7J_tzWbN_BSnKZO9Zeo',
+);
 
 typedef StatsReader = Future<String?> Function(String key);
 typedef StatsWriter = Future<void> Function(String key, String value);

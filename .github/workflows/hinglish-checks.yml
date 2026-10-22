@@ -2,7 +2,7 @@ name: Hinglish branch checks
 
 on:
   push:
-    branches: [hinglish-multilingual, vaani-ask-notes]
+    branches: [hinglish-multilingual, vaani-ask-notes, web-first-beta]
   workflow_dispatch:
 
 permissions:

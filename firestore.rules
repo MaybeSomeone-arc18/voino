@@ -49,6 +49,20 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+
+    // Signed-in users' saved boards: strictly owner-only. Each board is a
+    // title, the serialized draft JSON (capped at 1 MB) and an update time.
+    match /users/{uid}/boards/{boardId} {
+      allow read, delete: if request.auth != null && request.auth.uid == uid;
+      allow write: if request.auth != null && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['title', 'data', 'updatedAt'])
+        && request.resource.data.title is string
+        && request.resource.data.title.size() <= 200
+        && request.resource.data.data is string
+        && request.resource.data.data.size() <= 1000000
+        && request.resource.data.updatedAt is timestamp;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

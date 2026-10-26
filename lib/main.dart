@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:file_picker/file_picker.dart';
 import 'package:file_saver/file_saver.dart';
@@ -21,6 +22,8 @@ import 'glass.dart';
 import 'ask_notes.dart';
 import 'minimal_notes.dart';
 import 'listening_session.dart';
+import 'auth.dart';
+import 'boards_store.dart';
 import 'local_draft.dart';
 import 'pro_access.dart';
 import 'revenuecat_backend.dart';
@@ -96,6 +99,12 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
   String summary = '', noteSource = '';
   String before = '', lastSource = '', status = idleStatus;
   final board = BoardController();
+  final auth = VoinoAuth();
+  late final BoardsStore boardsStore = BoardsStore(tokenProvider: auth.idToken);
+  String? currentBoardId;
+  Timer? _syncTimer;
+  bool _syncing = false, _syncQueued = false;
+  String syncNote = '';
   List<CardModel> get cards => board.cards;
   List<Link> get links => board.links;
   List<ShapeModel> get shapes => board.shapes;
@@ -117,6 +126,10 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     );
     pro.addListener(_proChanged);
     pro.init();
+    auth.addListener(() {
+      if (mounted) setState(() {});
+    });
+    auth.init();
     deviceSession = ListeningSession(
       startEngine: (onWords) async {
         before = transcript.text.trim();
@@ -183,6 +196,154 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     if (restoringDraft) return;
     draftTouched = true;
     draft.changed(_draftData());
+    _queueCloudSync();
+  }
+
+  /// Signed-in boards sync themselves to the account a few seconds after the
+  /// last edit; local drafts stay the offline fallback for everyone.
+  void _queueCloudSync() {
+    if (!auth.signedIn) return;
+    _syncTimer?.cancel();
+    _syncTimer = Timer(const Duration(seconds: 4), _syncBoard);
+  }
+
+  Future<void> _syncBoard() async {
+    if (!auth.signedIn || board.isEmpty) return;
+    if (_syncing) {
+      _syncQueued = true;
+      return;
+    }
+    _syncing = true;
+    try {
+      final uid = auth.uid!;
+      currentBoardId ??= 'b${DateTime.now().millisecondsSinceEpoch}';
+      final name = title.text.trim().isEmpty ? 'Untitled board' : title.text.trim();
+      await boardsStore.save(uid, currentBoardId!, name, _draftData());
+      if (mounted) setState(() => syncNote = 'Synced to your account.');
+    } catch (_) {
+      if (mounted) {
+        setState(() => syncNote = 'Could not sync (offline?). Kept on this device.');
+      }
+    }
+    _syncing = false;
+    if (_syncQueued) {
+      _syncQueued = false;
+      _queueCloudSync();
+    }
+  }
+
+  Future<void> _signIn() async {
+    final ok = await auth.signIn();
+    if (ok && mounted) {
+      setState(() => syncNote = 'Signed in. Boards sync automatically.');
+      _queueCloudSync();
+    }
+  }
+
+  Future<void> _openBoards() async {
+    final uid = auth.uid;
+    if (uid == null) return;
+    List<BoardMeta>? boards;
+    String? loadError;
+    try {
+      boards = await boardsStore.list(uid);
+    } catch (_) {
+      loadError = 'Could not load your boards (offline?).';
+    }
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Your boards'),
+        content: SizedBox(
+          width: 360,
+          child: loadError != null
+              ? Text(loadError!)
+              : boards!.isEmpty
+              ? const Text('No saved boards yet. Make one and it syncs here.')
+              : ListView(
+                  shrinkWrap: true,
+                  children: [
+                    for (final b in boards!)
+                      ListTile(
+                        dense: true,
+                        title: Text(
+                          b.title.isEmpty ? 'Untitled board' : b.title,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: b.updatedAt == null
+                            ? null
+                            : Text(
+                                'Updated ${b.updatedAt!.toLocal().toString().substring(0, 16)}',
+                              ),
+                        trailing: IconButton(
+                          tooltip: 'Delete board',
+                          icon: const Icon(Icons.delete_outline, size: 20),
+                          onPressed: () async {
+                            try {
+                              await boardsStore.delete(uid, b.id);
+                            } catch (_) {}
+                            if (ctx.mounted) Navigator.of(ctx).pop();
+                            if (currentBoardId == b.id) currentBoardId = null;
+                            _openBoards();
+                          },
+                        ),
+                        onTap: () async {
+                          Navigator.of(ctx).pop();
+                          await _loadSavedBoard(b);
+                        },
+                      ),
+                  ],
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              setState(() {
+                currentBoardId = null;
+                board.clear();
+                title.clear();
+                transcript.clear();
+                summary = '';
+              });
+              _draftChanged();
+            },
+            child: const Text('New board'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _loadSavedBoard(BoardMeta b) async {
+    final uid = auth.uid;
+    if (uid == null) return;
+    try {
+      final data = await boardsStore.load(uid, b.id);
+      final parsed = parseBoardJson(jsonEncode(data));
+      if (parsed == null) throw const FormatException('bad board');
+      restoringDraft = true;
+      title.text = parsed.title;
+      transcript.text = parsed.transcript;
+      board.replace(parsed.board);
+      restoringDraft = false;
+      setState(() {
+        currentBoardId = b.id;
+        summary = data['summary'] is String ? data['summary'] : '';
+        noteSource = data['source'] is String ? data['source'] : '';
+        lastSource = data['lastSource'] is String ? data['lastSource'] : '';
+        view = 'board';
+        syncNote = 'Synced to your account.';
+      });
+      _draftChanged();
+    } catch (_) {
+      if (mounted) _msg('Could not open that board.');
+    }
   }
 
   Future<void> _restoreDraft() async {
@@ -295,6 +456,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     deviceSession.removeListener(_deviceChanged);
     deviceSession.dispose();
     speech.cancel();
+    _syncTimer?.cancel();
     pro.removeListener(_proChanged);
     pro.dispose();
     title.removeListener(_draftChanged);
@@ -700,6 +862,8 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
           ? draft.error
           : !draft.ready
           ? 'Opening local draft...'
+          : auth.signedIn && syncNote.isNotEmpty
+          ? syncNote
           : draft.saved
           ? 'Saved on this device. One draft only, no cloud backup.'
           : 'Saving on this device...',
@@ -751,6 +915,44 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                     onPro: openPro,
                     onListen: () => setState(() => view = 'listen'),
                     onSettings: openSettings,
+                    signedIn: auth.signedIn,
+                    authBusy: auth.busy,
+                    email: auth.email ?? '',
+                    onAccount: () async {
+                      if (!auth.signedIn) {
+                        await _signIn();
+                      } else {
+                        final out = await showDialog<bool>(
+                          context: context,
+                          builder: (ctx) => AlertDialog(
+                            title: Text(auth.email ?? 'Signed in'),
+                            content: const Text(
+                              'Your boards sync to this account.',
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.of(ctx).pop(false),
+                                child: const Text('Close'),
+                              ),
+                              TextButton(
+                                onPressed: () => Navigator.of(ctx).pop(true),
+                                child: const Text('Sign out'),
+                              ),
+                            ],
+                          ),
+                        );
+                        if (out == true) {
+                          await auth.signOut();
+                          if (mounted) {
+                            setState(() {
+                              currentBoardId = null;
+                              syncNote = '';
+                            });
+                          }
+                        }
+                      }
+                    },
+                    onBoards: auth.signedIn ? _openBoards : null,
                     settingsIcon:
                         (settings.useAi && settings.keys.isNotEmpty) ||
                             settings.useProxy
@@ -1320,10 +1522,18 @@ class VoinoHeader extends StatelessWidget {
     required this.onListen,
     required this.onSettings,
     required this.settingsIcon,
+    this.signedIn = false,
+    this.authBusy = false,
+    this.email = '',
+    this.onAccount,
+    this.onBoards,
   });
   final bool android, active, busy, showListen;
   final VoidCallback onPro, onListen, onSettings;
   final IconData settingsIcon;
+  final bool signedIn, authBusy;
+  final String email;
+  final VoidCallback? onAccount, onBoards;
   @override
   Widget build(BuildContext context) => Wrap(
     alignment: WrapAlignment.spaceBetween,
@@ -1368,6 +1578,18 @@ class VoinoHeader extends StatelessWidget {
               onPressed: onListen,
               child: const Text('Listen', style: TextStyle(color: ink)),
             ),
+          if (onBoards != null)
+            TextButton(
+              onPressed: onBoards,
+              child: const Text('Boards', style: TextStyle(color: ink)),
+            ),
+          TextButton(
+            onPressed: authBusy ? null : onAccount,
+            child: Text(
+              signedIn ? 'Account' : 'Sign in',
+              style: const TextStyle(color: ink),
+            ),
+          ),
           IconButton(
             tooltip: 'Gemini settings',
             onPressed: onSettings,

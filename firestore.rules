@@ -59,7 +59,7 @@ service cloud.firestore {
         && request.resource.data.title is string
         && request.resource.data.title.size() <= 200
         && request.resource.data.data is string
-        && request.resource.data.data.size() <= 1048576
+        && request.resource.data.data.size() <= 1000000
         && request.resource.data.updatedAt is timestamp;
     }
 

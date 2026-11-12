@@ -44,6 +44,12 @@ class VoinoApp extends StatelessWidget {
 
 /// Plain-language note for the common microphone failures, so a first-time
 /// visitor is not left staring at a raw error code.
+String notesActionLabel({required bool busy, required bool hasNotes, required bool stale}) {
+  if (busy) return 'Working...';
+  if (!hasNotes) return 'Make board';
+  return stale ? 'Update notes' : 'Notes up to date';
+}
+
 String friendlyMicNote(String raw) {
   final e = raw.toLowerCase();
   if (e.contains('not-allowed') ||
@@ -487,8 +493,10 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     var useProxy = settings.useProxy && defaultProxyUrl() != null;
     if (useKeys && !settings.consented) {
       if (await confirm(
-        'Send this transcript to Google Gemini using your API key to write a summary? '
-        'It leaves your device; on the free tier Google may use it to improve its products. Choose Cancel to skip it.',
+        'Send this transcript to Google Gemini with your API key to write a summary? It leaves your device. '
+        'On Google\'s free tier, Google may use it to improve its products and human reviewers may read it - '
+        'do not send sensitive or confidential discussions there. Choose Cancel to use private on-device notes instead. '
+        'You are asked once; reset anytime in Settings.',
       )) {
         settings.consented = true;
         await persistSettings();
@@ -499,7 +507,9 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     if (useProxy && !settings.proxyConsented) {
       if (await confirm(
         'Send this transcript to the Voino server, which forwards it to Google Gemini to write a summary? '
-        'It leaves your device; the server does not keep it. On the free tier Google may use it to improve its products. Choose Cancel to skip it.',
+        'It leaves your device; the Voino server does not store it. On Google\'s free tier, Google may use it to improve '
+        'its products and human reviewers may read it - do not send sensitive or confidential discussions there. '
+        'Choose Cancel to use private on-device notes instead. You are asked once; reset anytime in Settings.',
       )) {
         settings.proxyConsented = true;
         await persistSettings();
@@ -543,6 +553,12 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
       view = 'notes';
     });
     _draftChanged();
+  }
+
+  /// True when the transcript changed after the current notes were made.
+  bool get notesStale {
+    final src = cleanSpeech(transcript.text.trim());
+    return lastSource.isNotEmpty && src.isNotEmpty && src != lastSource;
   }
 
   /// Refreshes notes from the live transcript while still listening, using
@@ -895,7 +911,11 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                   const SizedBox(width: 10),
                   Expanded(
                     child: GlassButton(
-                      label: busy ? 'Working...' : 'Make board',
+                      label: notesActionLabel(
+                        busy: busy,
+                        hasNotes: summary.isNotEmpty || cards.isNotEmpty,
+                        stale: notesStale,
+                      ),
                       ink: ink,
                       primary: true,
                       onPressed: busy ? null : generate,

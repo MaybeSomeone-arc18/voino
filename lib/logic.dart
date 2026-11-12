@@ -111,8 +111,32 @@ Note makeNotes(String transcript, [String title = 'New note']) {
   final long = sentences.where((s) => s.split(' ').length >= 3).toList();
   if (long.isNotEmpty) sentences = long;
 
-  final actions = {...sentences.where(_isAction)}.toList();
-  final candidates = {...sentences.where((s) => !actions.contains(s))}.toList();
+  // Orphan guard: a bare deadline cue that points back with "that/this/it"
+  // ("The deadline for that is Wednesday.") merges into the sentence it
+  // refers to, instead of surfacing as a context-free action.
+  final backRef = RegExp(r'\b(?:that|this|it)\b', caseSensitive: false);
+  final deadlineCue = RegExp(r'\b(?:deadline|due)\b|डेडलाइन|आखिरी तारीख', caseSensitive: false);
+  final actions = <String>[];
+  final absorbed = <String>{}; // sentences folded into an action; not points
+  String? prev;
+  for (final s in sentences) {
+    if (_isAction(s)) {
+      final orphan = backRef.hasMatch(s) && deadlineCue.hasMatch(s) && s.split(' ').length <= 10;
+      if (orphan && prev != null) {
+        if (_isAction(prev) && actions.isNotEmpty) {
+          actions[actions.length - 1] = '${actions.last} $s';
+          absorbed.add(s);
+        } else if (!_isAction(prev)) {
+          actions.add('$prev $s');
+          absorbed..add(prev)..add(s);
+        }
+      } else if (!actions.contains(s)) {
+        actions.add(s);
+      }
+    }
+    prev = s;
+  }
+  final candidates = {...sentences.where((s) => !actions.contains(s) && !absorbed.contains(s))}.toList();
 
   final freq = <String, int>{};
   for (final s in candidates) {

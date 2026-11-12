@@ -156,6 +156,7 @@ void main() {
     });
   });
   semanticMergeTests();
+  orphanActionTests();
 }
 
 // --- semantic merge coverage (parent review): end items, dedup, boundaries ---
@@ -215,6 +216,31 @@ void semanticMergeTests() {
       expect(m.points, ['real point']);
       expect(m.actions, ['real action']);
       expect(m.summary, 'only summary');
+    });
+  });
+}
+
+// --- orphan action guard + notes action label ---
+void orphanActionTests() {
+  group('orphan deadline actions', () {
+    test('bare "deadline for that" merges into the sentence it refers to', () {
+      final n = makeNotes(
+        'Someone has to reply to the design agency about the logo revision. The deadline for that is Wednesday. '
+        'We need to finish the pitch deck by Thursday.');
+      expect(n.actions.any((a) => a.contains('logo revision') && a.contains('Wednesday')), isTrue);
+      expect(n.actions.any((a) => a.trim() == 'The deadline for that is Wednesday.'), isFalse);
+      // the referred-to sentence is absorbed into the action, not duplicated as a point
+      expect(n.points.any((p) => p.contains('logo revision')), isFalse);
+    });
+    test('concrete standalone action mentioning "that" is NOT merged', () {
+      final n = makeNotes(
+        'The pricing page needs a simpler layout. I should send that report. We must submit the form by Friday.');
+      expect(n.actions.any((a) => a.trim() == 'I should send that report.'), isTrue);
+    });
+    test('deadline with its own subject stays separate', () {
+      final n = makeNotes(
+        'Priya will draft the market slide tonight. The pitch deck deadline is Thursday.');
+      expect(n.actions.any((a) => a.contains('pitch deck deadline')), isTrue);
     });
   });
 }

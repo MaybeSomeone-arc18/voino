@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:voino/auto_notes.dart';
+import 'package:voino/main.dart' show notesActionLabel;
 
 void main() {
   String words(int n) => List.generate(n, (i) => 'w$i').join(' ');
@@ -51,4 +52,16 @@ void main() {
       expect(taps, 1);
     });
   });
+}
+
+void notesActionLabelTests() {
+  group('notesActionLabel', () {
+    test('lifecycle: Make board -> Notes up to date -> Update notes when stale', () {
+      expect(notesActionLabel(busy: false, hasNotes: false, stale: false), 'Make board');
+      expect(notesActionLabel(busy: false, hasNotes: true, stale: false), 'Notes up to date');
+      expect(notesActionLabel(busy: false, hasNotes: true, stale: true), 'Update notes');
+      expect(notesActionLabel(busy: true, hasNotes: true, stale: true), 'Working...');
+    });
+  });
+  notesActionLabelTests();
 }

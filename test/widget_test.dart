@@ -6,6 +6,7 @@ import 'package:http/testing.dart';
 import 'package:voino/board.dart';
 import 'package:voino/gemini.dart';
 import 'package:voino/logic.dart';
+import 'package:voino/main.dart' show shouldSkipAutoGenerate;
 
 const lecture = 'Um so photosynthesis means plants use sunlight to make energy. '
     'Photosynthesis happens in the chloroplast of plant cells. '
@@ -41,6 +42,50 @@ void main() {
   });
 
   group('local notes', () {
+    test('auto-generate skips only after the AI question is settled', () {
+      // Live local notes ran on this transcript; the AI/consent decision has
+      // not happened yet, so a stop-time pass must still run.
+      expect(
+        shouldSkipAutoGenerate(
+          boardEdited: false,
+          src: 'some discussion',
+          lastSource: 'some discussion',
+          aiSettledSource: '',
+        ),
+        isFalse,
+      );
+      // Settled (AI ran or consent declined): skip redundant re-runs.
+      expect(
+        shouldSkipAutoGenerate(
+          boardEdited: false,
+          src: 'some discussion',
+          lastSource: 'some discussion',
+          aiSettledSource: 'some discussion',
+        ),
+        isTrue,
+      );
+      // New speech since the last run: never skip.
+      expect(
+        shouldSkipAutoGenerate(
+          boardEdited: false,
+          src: 'some discussion and more',
+          lastSource: 'some discussion',
+          aiSettledSource: 'some discussion',
+        ),
+        isFalse,
+      );
+      // Hand-edited board is never overwritten by an automatic pass.
+      expect(
+        shouldSkipAutoGenerate(
+          boardEdited: true,
+          src: 'x',
+          lastSource: 'y',
+          aiSettledSource: '',
+        ),
+        isTrue,
+      );
+    });
+
     test('meeting openers are neither actions nor points', () {
       final n = makeNotes(
         'All right, everyone, let us start the launch review. '

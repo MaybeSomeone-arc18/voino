@@ -31,6 +31,20 @@ import 'stats.dart';
 
 void main() => runApp(const VoinoApp());
 
+/// Whether a non-manual generate (e.g. on stop) is redundant. Live LOCAL
+/// notes use the same transcript and must NOT suppress the final AI pass:
+/// skipping requires the AI-or-consent question to be settled for this
+/// exact transcript.
+bool shouldSkipAutoGenerate({
+  required bool boardEdited,
+  required String src,
+  required String lastSource,
+  required String aiSettledSource,
+}) {
+  if (boardEdited) return true;
+  return src == lastSource && aiSettledSource == src;
+}
+
 /// Confirm text for Clear. When archiving the current note would push the
 /// oldest saved note out of a full Recent notes list, say so up front.
 String clearConfirmText({required bool willEvict, String? oldestTitle}) {
@@ -116,6 +130,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
   String view = 'listen'; // listen | notes | board
   String summary = '', noteSource = '';
   String before = '', lastSource = '', status = idleStatus;
+  String _aiSettledSource = '';
   final board = BoardController();
   List<CardModel> get cards => board.cards;
   List<Link> get links => board.links;
@@ -493,7 +508,17 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
       if (manual) _msg('Speak, paste or type some words first.');
       return;
     }
-    if (!manual && (boardEdited || src == lastSource)) return;
+    if (!manual &&
+        shouldSkipAutoGenerate(
+          boardEdited: boardEdited,
+          src: src,
+          lastSource: lastSource,
+          aiSettledSource: _aiSettledSource,
+        ))
+      return;
+    final aiEligible =
+        (settings.useAi && settings.keys.isNotEmpty) ||
+        (settings.useProxy && defaultProxyUrl() != null);
     if (manual &&
         (cards.isNotEmpty || shapes.isNotEmpty) &&
         boardEdited &&
@@ -504,6 +529,10 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     }
     var useKeys = settings.useAi && settings.keys.isNotEmpty;
     var useProxy = settings.useProxy && defaultProxyUrl() != null;
+    // Whatever happens next - AI success, AI failure, or a declined consent -
+    // the AI question is settled for this transcript; do not re-ask on the
+    // next stop. Manual taps still re-run everything.
+    if (aiEligible) _aiSettledSource = src;
     if (useKeys && !settings.consented) {
       if (await confirm(
         'Send this transcript to Google Gemini with your API key to write a summary? It leaves your device. '
@@ -588,7 +617,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     setState(() {
       board.replace(buildBoard(n));
       summary = n.summary;
-      noteSource = 'Live notes (local). AI summary runs when you stop.';
+      noteSource = 'Live notes (local). AI summary may run when you stop.';
       lastSource = src;
       status = 'Notes updated while you speak.';
     });
@@ -708,6 +737,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
       noteSource = '';
       busy = false;
       lastSource = '';
+      _aiSettledSource = '';
       listening = false;
       micNote = '';
       status = idleStatus;

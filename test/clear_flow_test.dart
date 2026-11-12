@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/test/test_flutter_secure_storage_platform.dart';
@@ -79,6 +81,61 @@ void main() {
     await tester.tap(find.text('Recent notes on this device').last);
     await tester.pumpAndSettle();
   }
+
+  testWidgets(
+    'opening a recent note at capacity warns before dropping the oldest',
+    (tester) async {
+      tester.view.physicalSize = const Size(900, 1100);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      // Seed a full history: Seed A newest ... Seed E oldest.
+      final seeds = [
+        for (var i = 0; i < 5; i++)
+          {
+            'id': '2026-11-1${i}T10:00:00.000Z',
+            'title': 'Seed ${String.fromCharCode(65 + i)}',
+            'savedAt': '2026-11-1${i}T10:00:00.000Z',
+            'draft': {
+              'title': 'Seed ${String.fromCharCode(65 + i)}',
+              'transcript': 'old words $i',
+              'summary': 'old summary $i',
+            },
+          },
+      ];
+      FlutterSecureStoragePlatform.instance = TestFlutterSecureStoragePlatform(
+        {'voino_history_v1': jsonEncode(seeds)},
+      );
+
+      await tester.pumpWidget(const MaterialApp(home: Home()));
+      await tester.pumpAndSettle();
+
+      await typeNote(
+        tester,
+        'Today sync',
+        'Ananya will circulate the hiring rubric by Friday. '
+            'The team agreed to pause the referral bonus review.',
+      );
+      expect(find.text('Rule-based extract'), findsOneWidget);
+
+      await openRecent(tester);
+      await tester.tap(find.text('Seed A').last);
+      await tester.pumpAndSettle();
+
+      // Warning names the oldest note that would drop off.
+      expect(find.textContaining('will be removed to make room'), findsOneWidget);
+      expect(find.textContaining('Seed E'), findsWidgets);
+
+      // Declining keeps both the current note and the full history.
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(find.text('Rule-based extract'), findsOneWidget);
+
+      await openRecent(tester);
+      expect(find.text('Seed E'), findsOneWidget);
+    },
+  );
 
   testWidgets(
     'Clear archives; opening a recent note keeps the replaced one',

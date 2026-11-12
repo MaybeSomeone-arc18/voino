@@ -633,7 +633,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
               for (final e in history.entries)
                 ListTile(
                   title: Text(e.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-                  subtitle: Text(e.savedAt.substring(0, 10)),
+                  subtitle: Text(formatSavedAt(e.savedAt)),
                   trailing: IconButton(
                     icon: const Icon(Icons.delete_outline),
                     tooltip: 'Delete',
@@ -642,7 +642,14 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                   onTap: () async {
                     Navigator.of(ctx).pop();
                     // Keep the note being replaced: archive the current one
-                    // first (archive() skips it when empty or unchanged).
+                    // first (archive() skips it when empty or unchanged). If
+                    // that would push the oldest saved note out of a full
+                    // list, say so before opening.
+                    if (history.wouldEvictOnArchive(_draftData()) &&
+                        !await confirm(
+                          "Opening this keeps your current note in Recent notes. The list is full, so the oldest one, '${history.entries.last.title}', will be removed to make room.",
+                        ))
+                      return;
                     await history.archive(_draftData());
                     _applyHistoryDraft(e.draft);
                   },
@@ -678,10 +685,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
   }
 
   Future<void> clearAll() async {
-    final hasContent = title.text.trim().isNotEmpty ||
-        transcript.text.trim().isNotEmpty ||
-        summary.trim().isNotEmpty;
-    final willEvict = hasContent && history.entries.length >= history.maxEntries;
+    final willEvict = history.wouldEvictOnArchive(_draftData());
     if (!await confirm(clearConfirmText(
       willEvict: willEvict,
       oldestTitle: willEvict ? history.entries.last.title : null,

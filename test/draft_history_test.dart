@@ -26,6 +26,33 @@ void main() {
     expect(h.error, isEmpty);
   });
 
+  test('wouldEvictOnArchive: only when full, non-empty, and not a duplicate', () async {
+    final (h, _) = makeStore();
+    await h.load();
+    for (var i = 0; i < 5; i++) {
+      await h.archive(draft('n$i'));
+    }
+    expect(h.wouldEvictOnArchive(draft('new')), isTrue);
+    expect(h.wouldEvictOnArchive(draft('n4')), isFalse); // identical to newest
+    expect(
+      h.wouldEvictOnArchive({'title': '', 'transcript': '', 'summary': ''}),
+      isFalse,
+    );
+
+    final (h2, _) = makeStore();
+    await h2.load();
+    await h2.archive(draft('only'));
+    expect(h2.wouldEvictOnArchive(draft('new')), isFalse); // not full yet
+  });
+
+  test('formatSavedAt shows the local calendar day, not the UTC day', () {
+    const saved = '2026-11-12T19:30:00.000Z'; // 01:00 on Nov 13 in IST
+    final l = DateTime.parse(saved).toLocal();
+    String two(int n) => n.toString().padLeft(2, '0');
+    expect(formatSavedAt(saved), '${l.year}-${two(l.month)}-${two(l.day)}');
+    expect(formatSavedAt('not-a-date'), 'not-a-date');
+  });
+
   test('archiving the same content twice keeps one entry (open/reopen dedupe)', () async {
     final (h, _) = makeStore();
     await h.load();

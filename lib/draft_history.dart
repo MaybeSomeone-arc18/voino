@@ -63,27 +63,43 @@ class DraftHistory extends ChangeNotifier {
     _notify();
   }
 
+  bool _isEmpty(String title, String transcript, String summary) =>
+      title.isEmpty && transcript.isEmpty && summary.isEmpty;
+
+  /// True when the newest entry already holds exactly this content, so
+  /// archiving it again would only pile up a duplicate.
+  bool _isDuplicateOfNewest(String title, String transcript, String summary) {
+    if (entries.isEmpty) return false;
+    final d = entries.first.draft;
+    String g(String k) => (d[k] as String? ?? '').trim();
+    final firstTitle = entries.first.title;
+    final thisTitle = title.isEmpty ? 'Untitled note' : title;
+    return firstTitle == thisTitle &&
+        g('transcript') == transcript &&
+        g('summary') == summary;
+  }
+
+  /// True when archive(draft) would add a new entry AND push the oldest one
+  /// out of a full list. Callers must warn before letting that happen.
+  bool wouldEvictOnArchive(Map<String, dynamic> draft) {
+    final title = (draft['title'] as String? ?? '').trim();
+    final transcript = (draft['transcript'] as String? ?? '').trim();
+    final summary = (draft['summary'] as String? ?? '').trim();
+    if (_isEmpty(title, transcript, summary)) return false;
+    if (entries.length < maxEntries) return false;
+    return !_isDuplicateOfNewest(title, transcript, summary);
+  }
+
   /// Archives a draft snapshot. Returns false when there is nothing worth
-  /// keeping (empty title and transcript and no board content).
+  /// keeping (empty title and transcript and no board content), or when the
+  /// newest entry already holds exactly this content (see
+  /// [_isDuplicateOfNewest]).
   Future<bool> archive(Map<String, dynamic> draft) async {
     final title = (draft['title'] as String? ?? '').trim();
     final transcript = (draft['transcript'] as String? ?? '').trim();
     final summary = (draft['summary'] as String? ?? '').trim();
-    if (title.isEmpty && transcript.isEmpty && summary.isEmpty) return false;
-    // Opening a recent note auto-archives the one it replaces; skip when the
-    // newest entry already holds exactly this content, so reopening notes
-    // does not pile up duplicates.
-    if (entries.isNotEmpty) {
-      final d = entries.first.draft;
-      String g(String k) => (d[k] as String? ?? '').trim();
-      final firstTitle = entries.first.title;
-      final thisTitle = title.isEmpty ? 'Untitled note' : title;
-      if (firstTitle == thisTitle &&
-          g('transcript') == transcript &&
-          g('summary') == summary) {
-        return false;
-      }
-    }
+    if (_isEmpty(title, transcript, summary)) return false;
+    if (_isDuplicateOfNewest(title, transcript, summary)) return false;
     entries.insert(
       0,
       DraftHistoryEntry(
@@ -119,6 +135,16 @@ class DraftHistory extends ChangeNotifier {
     }
     _notify();
   }
+}
+
+/// Formats an ISO-8601 timestamp as a local calendar date (yyyy-mm-dd).
+/// Saved values are UTC; the user thinks in their own day, so convert first.
+String formatSavedAt(String savedAt) {
+  final parsed = DateTime.tryParse(savedAt);
+  if (parsed == null) return savedAt;
+  final l = parsed.toLocal();
+  String two(int n) => n.toString().padLeft(2, '0');
+  return '${l.year}-${two(l.month)}-${two(l.day)}';
 }
 
 class DraftHistoryEntry {

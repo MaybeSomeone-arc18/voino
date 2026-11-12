@@ -41,6 +41,28 @@ void main() {
   });
 
   group('local notes', () {
+    test('meeting openers are neither actions nor points', () {
+      final n = makeNotes(
+        'All right, everyone, let us start the launch review. '
+        'Priya will finish the pitch deck by Thursday.',
+      );
+      expect(n.actions, ['Priya will finish the pitch deck by Thursday.']);
+      expect(n.points.where((p) => p.contains('let us start')), isEmpty);
+      expect(n.actions.where((a) => a.contains('let us start')), isEmpty);
+    });
+
+    test('"review" counts only as a verb with an object, not as a noun', () {
+      final noun = makeNotes(
+        'The design review went well. '
+        'The team agreed to pause the referral bonus review until after the launch. '
+        'We need to fix the onboarding copy.',
+      );
+      expect(noun.actions, ['We need to fix the onboarding copy.']);
+
+      final verb = makeNotes('Please review the deck before Friday.');
+      expect(verb.actions, ['Please review the deck before Friday.']);
+    });
+
     test('separates actions, strips filler, keeps source wording', () {
       final n = makeNotes(lecture);
       expect(n.actions, ['Remember to submit the biology worksheet Friday.']);

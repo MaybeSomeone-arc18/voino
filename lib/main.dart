@@ -22,6 +22,7 @@ import 'ask_notes.dart';
 import 'minimal_notes.dart';
 import 'listening_session.dart';
 import 'auto_notes.dart';
+import 'draft_history.dart';
 import 'local_draft.dart';
 import 'pro_access.dart';
 import 'revenuecat_backend.dart';
@@ -85,6 +86,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
   bool _sessionCounted = false;
   bool _autoRoutedToGemini = false;
   final _autoNotes = AutoNotes();
+  final history = DraftHistory();
   late final ListeningSession deviceSession;
   final title = TextEditingController(), transcript = TextEditingController();
   final speech = SpeechToText();
@@ -195,6 +197,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
   }
 
   Future<void> _restoreDraft() async {
+    await history.load();
     final value = await draft.load();
     if (!mounted) return;
     if (draftTouched) {
@@ -581,6 +584,67 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     _draftChanged();
   }
 
+  void _applyHistoryDraft(Map<String, dynamic> value) {
+    final parsed = parseBoardJson(jsonEncode(value));
+    if (parsed == null) {
+      _msg('That recent note could not be opened.');
+      return;
+    }
+    restoringDraft = true;
+    title.text = parsed.title;
+    transcript.text = parsed.transcript;
+    board.replace(parsed.board);
+    setState(() {
+      summary = value['summary'] is String ? value['summary'] : '';
+      noteSource = value['source'] is String ? value['source'] : '';
+      lastSource = value['lastSource'] is String ? value['lastSource'] : '';
+      board.edited = false;
+      view = 'notes';
+    });
+    restoringDraft = false;
+    _draftChanged();
+  }
+
+  Future<void> openRecentNotes() async {
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AnimatedBuilder(
+        animation: history,
+        builder: (ctx, _) => SimpleDialog(
+          title: const Text('Recent notes on this device'),
+          children: [
+            if (history.entries.isEmpty)
+              const Padding(
+                padding: EdgeInsets.fromLTRB(24, 0, 24, 16),
+                child: Text('Nothing here yet. Cleared notes are kept here - up to five, on this device only.'),
+              )
+            else
+              for (final e in history.entries)
+                ListTile(
+                  title: Text(e.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  subtitle: Text(e.savedAt.substring(0, 10)),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.delete_outline),
+                    tooltip: 'Delete',
+                    onPressed: () => history.remove(e.id),
+                  ),
+                  onTap: () {
+                    Navigator.of(ctx).pop();
+                    _applyHistoryDraft(e.draft);
+                  },
+                ),
+            if (history.entries.isNotEmpty)
+              const Padding(
+                padding: EdgeInsets.fromLTRB(24, 4, 24, 12),
+                child: Text('Tap a note to open it. Up to five are kept; the oldest drops off.',
+                    style: TextStyle(fontSize: 12, color: Colors.black54)),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> downloadNotes() async {
     final n = currentNote();
     final name = title.text.trim().isEmpty
@@ -601,9 +665,10 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
 
   Future<void> clearAll() async {
     if (!await confirm(
-      'Clear everything: transcript, notes, board and drawings? Download first if you want to keep them.',
+      'Clear everything: transcript, notes, board and drawings? The current note moves to Recent notes on this device.',
     ))
       return;
+    await history.archive(_draftData());
     if (listening) {
       if (_webAsr) {
         await WhisperEngine.stop();
@@ -768,6 +833,8 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
       onBoard: generate,
       onFile: (action) {
         switch (action) {
+          case 'recent':
+            openRecentNotes();
           case 'notes':
             downloadNotes();
           case 'copy':

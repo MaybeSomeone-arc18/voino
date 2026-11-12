@@ -26,6 +26,17 @@ void main() {
     expect(h.error, isEmpty);
   });
 
+  test('archiving the same content twice keeps one entry (open/reopen dedupe)', () async {
+    final (h, _) = makeStore();
+    await h.load();
+    expect(await h.archive(draft('standup')), isTrue);
+    expect(await h.archive(draft('standup')), isFalse);
+    expect(h.entries, hasLength(1));
+    expect(await h.archive(draft('retro')), isTrue);
+    expect(h.entries, hasLength(2));
+    expect(h.entries.first.title, 'retro');
+  });
+
   test('archive keeps content, newest first; empty drafts are not archived', () async {
     final (h, _) = makeStore();
     await h.load();

@@ -31,6 +31,17 @@ import 'stats.dart';
 
 void main() => runApp(const VoinoApp());
 
+/// Confirm text for Clear. When archiving the current note would push the
+/// oldest saved note out of a full Recent notes list, say so up front.
+String clearConfirmText({required bool willEvict, String? oldestTitle}) {
+  const base =
+      'Clear everything: transcript, notes, board and drawings? The current note moves to Recent notes on this device.';
+  if (willEvict && oldestTitle != null) {
+    return "$base Recent notes is full, so the oldest one, '$oldestTitle', will be removed to make room.";
+  }
+  return base;
+}
+
 class VoinoApp extends StatelessWidget {
   const VoinoApp({super.key});
   @override
@@ -628,15 +639,18 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                     tooltip: 'Delete',
                     onPressed: () => history.remove(e.id),
                   ),
-                  onTap: () {
+                  onTap: () async {
                     Navigator.of(ctx).pop();
+                    // Keep the note being replaced: archive the current one
+                    // first (archive() skips it when empty or unchanged).
+                    await history.archive(_draftData());
                     _applyHistoryDraft(e.draft);
                   },
                 ),
             if (history.entries.isNotEmpty)
               const Padding(
                 padding: EdgeInsets.fromLTRB(24, 4, 24, 12),
-                child: Text('Tap a note to open it. Up to five are kept; the oldest drops off.',
+                child: Text('Tap a note to open it - the note you were working on is kept here too. Up to five are kept.',
                     style: TextStyle(fontSize: 12, color: Colors.black54)),
               ),
           ],
@@ -664,9 +678,14 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
   }
 
   Future<void> clearAll() async {
-    if (!await confirm(
-      'Clear everything: transcript, notes, board and drawings? The current note moves to Recent notes on this device.',
-    ))
+    final hasContent = title.text.trim().isNotEmpty ||
+        transcript.text.trim().isNotEmpty ||
+        summary.trim().isNotEmpty;
+    final willEvict = hasContent && history.entries.length >= history.maxEntries;
+    if (!await confirm(clearConfirmText(
+      willEvict: willEvict,
+      oldestTitle: willEvict ? history.entries.last.title : null,
+    )))
       return;
     await history.archive(_draftData());
     if (listening) {

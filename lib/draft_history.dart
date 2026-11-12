@@ -70,6 +70,20 @@ class DraftHistory extends ChangeNotifier {
     final transcript = (draft['transcript'] as String? ?? '').trim();
     final summary = (draft['summary'] as String? ?? '').trim();
     if (title.isEmpty && transcript.isEmpty && summary.isEmpty) return false;
+    // Opening a recent note auto-archives the one it replaces; skip when the
+    // newest entry already holds exactly this content, so reopening notes
+    // does not pile up duplicates.
+    if (entries.isNotEmpty) {
+      final d = entries.first.draft;
+      String g(String k) => (d[k] as String? ?? '').trim();
+      final firstTitle = entries.first.title;
+      final thisTitle = title.isEmpty ? 'Untitled note' : title;
+      if (firstTitle == thisTitle &&
+          g('transcript') == transcript &&
+          g('summary') == summary) {
+        return false;
+      }
+    }
     entries.insert(
       0,
       DraftHistoryEntry(

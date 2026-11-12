@@ -22,7 +22,6 @@ import 'ask_notes.dart';
 import 'minimal_notes.dart';
 import 'listening_session.dart';
 import 'auto_notes.dart';
-import 'auto_notes.dart';
 import 'local_draft.dart';
 import 'pro_access.dart';
 import 'revenuecat_backend.dart';

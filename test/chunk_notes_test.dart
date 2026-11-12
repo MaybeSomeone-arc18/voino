@@ -155,4 +155,66 @@ void main() {
       expect(r.how, contains('AI failed'));
     });
   });
+  semanticMergeTests();
+}
+
+// --- semantic merge coverage (parent review): end items, dedup, boundaries ---
+void semanticMergeTests() {
+  group('mergePartNotes semantic coverage', () {
+    test('decisions and actions from the LAST chunk survive unchanged', () {
+      final early = Note('P', ['opening context point'], ['early setup task'], 'start',
+          summary: 'We opened with context.', source: 'ai');
+      final late = Note(
+        'P',
+        ['final decision: ship on Friday'],
+        ['Sanskar sends the recap tonight', 'book the review slot'],
+        'end',
+        summary: 'We decided to ship Friday.',
+        source: 'ai',
+      );
+      final m = mergePartNotes([early, late], 'Meeting', 'start end');
+      expect(m.points, contains('final decision: ship on Friday'));
+      expect(m.actions, contains('Sanskar sends the recap tonight'));
+      expect(m.actions, contains('book the review slot'));
+      // summary order is chronological: opening before decision
+      expect(m.summary.indexOf('opened with context'),
+          lessThan(m.summary.indexOf('decided to ship Friday')));
+    });
+
+    test('duplicate action across chunks appears once, variants both kept', () {
+      final a = Note('P', ['p1'], ['send the recap'], 'a', summary: 's1', source: 'ai');
+      final b = Note('P', ['p2'], ['Send the recap', 'send the recap to investors'], 'b',
+          summary: 's2', source: 'ai');
+      final m = mergePartNotes([a, b], 't', 'a b');
+      expect(m.actions.where((x) => x.toLowerCase() == 'send the recap'), hasLength(1));
+      expect(m.actions, contains('send the recap to investors'));
+    });
+
+    test('topics from different chunks stay separate groups (no cross-chunk index bleed)', () {
+      final a = Note('P', ['alpha one', 'alpha two'], [], 'a',
+          topics: [Topic('Alpha', [0, 1])], source: 'ai');
+      final b = Note('P', ['beta one'], [], 'b',
+          topics: [Topic('Beta', [0])], source: 'ai');
+      final m = mergePartNotes([a, b], 't', 'a b');
+      expect(m.topics.map((t) => t.name), ['Alpha', 'Beta']);
+      expect(m.topics[0].points, [0, 1]);
+      expect(m.topics[1].points, [2]);
+      expect(m.points[2], 'beta one');
+    });
+
+    test('mixed-source parts are labeled rule, not AI', () {
+      final ai = Note('P', ['p'], [], 'a', summary: 's', source: 'ai');
+      final rule = Note('P', ['q'], [], 'b', summary: 's', source: 'rule');
+      expect(mergePartNotes([ai, rule], 't', 'a b').source, 'rule');
+    });
+
+    test('empty summaries and empty point lists merge safely', () {
+      final a = Note('P', <String>[], <String>[], 'a', source: 'ai');
+      final b = Note('P', ['real point'], ['real action'], 'b', summary: 'only summary', source: 'ai');
+      final m = mergePartNotes([a, b], 't', 'a b');
+      expect(m.points, ['real point']);
+      expect(m.actions, ['real action']);
+      expect(m.summary, 'only summary');
+    });
+  });
 }

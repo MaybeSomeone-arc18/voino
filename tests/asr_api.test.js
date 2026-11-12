@@ -60,3 +60,17 @@ test('local rate limit', async () => {
   assert.equal(r.code, 429);
   assert.equal(r.headers['Retry-After'], '9');
 });
+
+test('falls back to shared GEMINI_KEYS when GEMINI_API_KEY is unset', async () => {
+  const seen = [];
+  const fetchImpl = async (url, opts) => {
+    seen.push(opts.headers['x-goog-api-key']);
+    return ok('hello there')();
+  };
+  const h = makeHandler({ env: { GEMINI_KEYS: 'shared-a,shared-b' }, fetchImpl, limiter: () => ({ ok: true }) });
+  const r = mkRes();
+  await h(req({ audio: AUDIO }), r);
+  assert.equal(r.code, 200);
+  assert.deepEqual(r.body, { text: 'hello there' });
+  assert.ok(seen[0] === 'shared-a' || seen[0] === 'shared-b');
+});

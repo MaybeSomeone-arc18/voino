@@ -21,6 +21,8 @@ import 'glass.dart';
 import 'ask_notes.dart';
 import 'minimal_notes.dart';
 import 'listening_session.dart';
+import 'auto_notes.dart';
+import 'auto_notes.dart';
 import 'local_draft.dart';
 import 'pro_access.dart';
 import 'revenuecat_backend.dart';
@@ -77,6 +79,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
   final stats = Stats();
   bool _sessionCounted = false;
   bool _autoRoutedToGemini = false;
+  final _autoNotes = AutoNotes();
   late final ListeningSession deviceSession;
   final title = TextEditingController(), transcript = TextEditingController();
   final speech = SpeechToText();
@@ -140,6 +143,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
         if (mounted && words.trim().isNotEmpty) {
           setState(() => transcript.text = stitchSpeech(before, words));
           _maybeRouteToGemini(words);
+          _maybeAutoNotes();
         }
       },
     );
@@ -404,6 +408,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
             setState(
               () => transcript.text = stitchSpeech(transcript.text, clean),
             );
+          _maybeAutoNotes();
         },
         onProgress: (p) {
           if (mounted)
@@ -437,6 +442,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     if (_webAsr) return toggleWhisper();
     if (deviceSession.requested) {
       await deviceSession.stop();
+      _autoNotes.reset();
       if (mounted) generate(manual: false);
     } else {
       await deviceSession.start();
@@ -539,6 +545,43 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     _draftChanged();
   }
 
+  /// Refreshes notes from the live transcript while still listening, using
+  /// the local extractor: instant, free, and no consent dialogs mid-talk.
+  /// The full AI pass runs when listening stops.
+  void _maybeAutoNotes() {
+    if (!listening || busy) return;
+    final src = cleanSpeech(transcript.text.trim());
+    if (src.isEmpty || boardEdited || src == lastSource || !_autoNotes.due(src)) return;
+    _autoNotes.markRun(src);
+    final n = makeNotes(src, title.text);
+    setState(() {
+      board.replace(buildBoard(n));
+      summary = n.summary;
+      noteSource = 'Live notes (local). AI summary runs when you stop.';
+      lastSource = src;
+      status = 'Notes updated while you speak.';
+    });
+    _draftChanged();
+  }
+
+  Future<void> downloadNotes() async {
+    final n = currentNote();
+    final name = title.text.trim().isEmpty
+        ? 'voino-notes'
+        : title.text.trim().replaceAll(RegExp(r'[^A-Za-z0-9-]+'), '-');
+    try {
+      await FileSaver.instance.saveFile(
+        name: name,
+        bytes: Uint8List.fromList(utf8.encode(exportText(n))),
+        fileExtension: 'txt',
+        mimeType: MimeType.text,
+      );
+      _msg('Notes downloaded');
+    } catch (e) {
+      _msg('Could not save the file ($e). Use Copy notes instead.');
+    }
+  }
+
   Future<void> clearAll() async {
     if (!await confirm(
       'Clear everything: transcript, notes, board and drawings? Download first if you want to keep them.',
@@ -566,6 +609,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
       view = 'listen';
       _autoRoutedToGemini = false;
     });
+    _autoNotes.reset();
     _draftChanged();
     await draft.flush();
   }
@@ -707,6 +751,8 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
       onBoard: generate,
       onFile: (action) {
         switch (action) {
+          case 'notes':
+            downloadNotes();
           case 'copy':
             copyBoardJson();
           case 'save':
@@ -758,6 +804,19 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                         : Icons.tune,
                   ),
                 ),
+                if (listening && view != 'listen')
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 8, 24, 0),
+                    child: Align(
+                      alignment: Alignment.topCenter,
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 720),
+                        child: ListeningBanner(
+                          onTap: () => setState(() => view = 'listen'),
+                        ),
+                      ),
+                    ),
+                  ),
                 Expanded(
                   child: AnimatedSwitcher(
                     duration: const Duration(milliseconds: 350),

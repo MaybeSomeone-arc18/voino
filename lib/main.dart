@@ -494,7 +494,8 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
       if (await confirm(
         'Send this transcript to Google Gemini with your API key to write a summary? It leaves your device. '
         'On Google\'s free tier, Google may use it to improve its products and human reviewers may read it - '
-        'do not send sensitive or confidential discussions there. Choose Cancel to use private on-device notes instead. '
+        'do not send sensitive or confidential discussions there. Choose Cancel to keep the notes on this device instead. '
+        'Note: speech recognition itself may already have used your device or browser vendor\'s online service. '
         'You are asked once; reset anytime in Settings.',
       )) {
         settings.consented = true;
@@ -506,9 +507,10 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     if (useProxy && !settings.proxyConsented) {
       if (await confirm(
         'Send this transcript to the Voino server, which forwards it to Google Gemini to write a summary? '
-        'It leaves your device; the Voino server does not store it. On Google\'s free tier, Google may use it to improve '
-        'its products and human reviewers may read it - do not send sensitive or confidential discussions there. '
-        'Choose Cancel to use private on-device notes instead. You are asked once; reset anytime in Settings.',
+        'It leaves your device; Voino\'s app code does not store the transcript. On Google\'s free tier, Google may use '
+        'it to improve its products and human reviewers may read it - do not send sensitive or confidential discussions there. '
+        'Choose Cancel to keep the notes on this device instead. Note: speech recognition itself may already have used '
+        'your device or browser vendor\'s online service. You are asked once; reset anytime in Settings.',
       )) {
         settings.proxyConsented = true;
         await persistSettings();

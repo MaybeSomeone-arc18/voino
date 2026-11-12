@@ -204,3 +204,29 @@ test('quota on every model still reports quota', async () => {
     (e) => e.status === 429 && e.code === 'quota_exceeded' || e.code === 'quota_exhausted'
   );
 });
+
+test('summarize respects the overall budget when upstream hangs', async () => {
+  // Every upstream call hangs forever: the handler must still answer with a
+  // JSON error inside the budget, never a platform-level timeout.
+  const hanging = () => new Promise((_, rej) => {
+    const t = setTimeout(() => rej(new Error('aborted')), 60000);
+    t.unref?.();
+  });
+  const started = Date.now();
+  await assert.rejects(
+    core.summarize('short transcript', { keys: ['k1', 'k2'], fetchImpl: hanging, timeoutMs: 30000, budgetMs: 1500 }),
+    (e) => e.status === 503 || e.status === 429
+  );
+  assert.ok(Date.now() - started < 14000, 'must give up well inside the function limit');
+});
+
+test('summarize budget leaves at least one real attempt', async () => {
+  let calls = 0;
+  const slow = async () => {
+    calls++;
+    return { status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({ title: 't', summary: 's', points: ['p one'], actions: [], topics: [], links: [] }) }] } }] }) };
+  };
+  const out = await core.summarize('short transcript', { keys: ['k1'], fetchImpl: slow, budgetMs: 26000 });
+  assert.equal(out.points.length, 1);
+  assert.equal(calls, 1);
+});

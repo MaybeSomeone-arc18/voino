@@ -204,12 +204,15 @@ async function summarizeOnce(transcript, { keys, fetchImpl = fetch, model = DEFA
 /// Tries each model in turn (key rotation happens inside each model). A model
 /// that is retired, rejected or busy falls through to the next; a quota error
 /// on every model still reports quota.
-async function summarize(transcript, { keys, fetchImpl = fetch, model = DEFAULT_MODEL, timeoutMs = 25000 } = {}) {
+async function summarize(transcript, { keys, fetchImpl = fetch, model = DEFAULT_MODEL, timeoutMs = 25000, budgetMs = 26000 } = {}) {
   const chain = [model, ...FALLBACK_MODELS.filter((m) => m !== model)];
+  const deadline = Date.now() + budgetMs;
   let last = null, quota = null;
   for (const m of chain) {
+    const remaining = deadline - Date.now();
+    if (remaining < 4000) break; // not enough time for another upstream call
     try {
-      return await summarizeOnce(transcript, { keys, fetchImpl, model: m, timeoutMs });
+      return await summarizeOnce(transcript, { keys, fetchImpl, model: m, timeoutMs: Math.min(timeoutMs, remaining - 1000) });
     } catch (e) {
       // A malformed request fails on every model; anything else (retired or
       // busy model, key or quota trouble) may still work on the next one.

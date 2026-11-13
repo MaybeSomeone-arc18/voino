@@ -442,6 +442,10 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
             setState(
               () => transcript.text = stitchSpeech(transcript.text, clean),
             );
+          // Persist each finalized segment immediately: on a stalled or
+          // crashing renderer the 500ms debounce may never fire, and an
+          // in-progress capture would be lost up to the last flush.
+          draft.flush();
           _maybeAutoNotes();
         },
         onProgress: (p) {

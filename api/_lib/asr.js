@@ -1,7 +1,7 @@
 'use strict';
 // Core logic for api/transcribe.js: short audio chunk -> text through the Gemini API.
 // The key comes from the GEMINI_API_KEY environment variable and never reaches the client.
-const { createRateLimiter, parseKeys } = require('./core');
+const { createRateLimiter } = require('./core');
 
 const MAX_BODY_BYTES = 1.5 * 1024 * 1024; // about 40 s of 16 kHz mono 16-bit audio as base64
 const DEFAULT_MODEL = 'gemini-3.5-flash-lite';
@@ -72,13 +72,8 @@ function makeHandler({ env = process.env, fetchImpl = fetch, limiter = createRat
     if (req.method === 'OPTIONS') return res.status(204).end();
     if (req.method !== 'POST') return res.status(405).json({ error: 'method_not_allowed' });
 
-    // Prefer the dedicated ASR key; fall back to the shared summarizer keys
-    // so one configured key set powers both routes. Values never leave the server.
-    const keys = (env.GEMINI_API_KEY || '').trim()
-      ? [(env.GEMINI_API_KEY || '').trim()]
-      : parseKeys(env.GEMINI_KEYS || env.GEMINI_API_KEYS);
-    if (!keys.length) return res.status(503).json({ error: 'not_configured' });
-    const key = keys[Math.floor(Math.random() * keys.length)];
+    const key = (env.GEMINI_API_KEY || '').trim();
+    if (!key) return res.status(503).json({ error: 'not_configured' });
 
     const ip = String(req.headers?.['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown').split(',')[0].trim();
     const rl = limiter(ip);

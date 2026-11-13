@@ -106,6 +106,9 @@ class Home extends StatefulWidget {
 class _HomeState extends State<Home> with WidgetsBindingObserver {
   final draft = LocalDraft();
   bool draftTouched = false, restoringDraft = false;
+  // Set while a capture is open; persisted inside the draft so a crash or
+  // kill mid-capture is detectable on the next launch.
+  bool draftInterrupted = false, _captureActive = false;
   late final ProAccess pro;
   final stats = Stats();
   bool _sessionCounted = false;
@@ -214,12 +217,27 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     'summary': summary,
     'source': noteSource,
     'lastSource': lastSource,
+    'captureActive': _captureActive,
   };
 
   void _draftChanged() {
     if (restoringDraft) return;
     draftTouched = true;
     draft.changed(_draftData());
+  }
+
+  // Tracks capture open/closed inside the persisted draft. Flushed
+  // immediately (not debounced): the flag must reach storage before the
+  // renderer can die, or an interrupted session would look like a clean one.
+  void _setCaptureActive(bool v) {
+    if (v == _captureActive) return;
+    _captureActive = v;
+    if (v && draftInterrupted) draftInterrupted = false; // new capture supersedes
+    if (draft.ready && !restoringDraft) {
+      draft.changed(_draftData());
+      draft.flush();
+    }
+    if (mounted) setState(() {});
   }
 
   Future<void> _restoreDraft() async {
@@ -244,6 +262,14 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
       view = 'notes';
     });
     restoringDraft = false;
+    if (value['captureActive'] == true) {
+      // The previous session ended with a capture still open: crash, kill
+      // or power loss. Warn once, then clear the flag in storage.
+      _captureActive = false;
+      draftInterrupted = true;
+      draft.changed(_draftData());
+      await draft.flush();
+    }
   }
 
   /// The browser's English speech service mangles Hindi. When real
@@ -284,6 +310,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
         listening = deviceSession.requested;
         micNote = deviceSession.message;
       });
+      _setCaptureActive(deviceSession.requested);
       // Cloud speech is unreachable: switch to on-device Whisper and start it.
       if (kIsWeb &&
           WhisperEngine.supported &&
@@ -324,6 +351,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
             micNote = 'Paused in background. Tap to resume.';
           });
       }
+      _setCaptureActive(false);
     }
   }
 
@@ -427,6 +455,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
         listening = false;
         micNote = '';
       });
+      _setCaptureActive(false);
       generate(manual: false);
       return;
     }
@@ -462,6 +491,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
         },
       );
       stats.sessionStarted();
+      _setCaptureActive(true);
     } catch (e) {
       if (mounted) {
         final raw = '$e'.replaceFirst('Exception: ', '');
@@ -747,6 +777,8 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
       status = idleStatus;
       view = 'listen';
       _autoRoutedToGemini = false;
+      draftInterrupted = false;
+      _captureActive = false;
     });
     _autoNotes.reset();
     _draftChanged();
@@ -973,6 +1005,20 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                               children: [
                                 _tabs(),
                                 const SizedBox(height: 16),
+                                if (view == 'notes' && draftInterrupted)
+                                  Align(
+                                    alignment: Alignment.topCenter,
+                                    child: ConstrainedBox(
+                                      constraints: const BoxConstraints(
+                                        maxWidth: 720,
+                                      ),
+                                      child: InterruptedCaptureBanner(
+                                        onDismiss: () => setState(
+                                          () => draftInterrupted = false,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
                                 if (view == 'board')
                                   _boardSection()
                                 else

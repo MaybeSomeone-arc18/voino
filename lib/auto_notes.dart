@@ -72,3 +72,44 @@ class ListeningBanner extends StatelessWidget {
         ),
       );
 }
+
+/// Shown when a restored draft carries an open-capture marker: the previous
+/// session ended without a clean stop (crash, kill, power loss), so speech
+/// captured near the end may never have reached the note.
+class InterruptedCaptureBanner extends StatelessWidget {
+  const InterruptedCaptureBanner({super.key, required this.onDismiss});
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Material(
+          color: const Color(0xFFFFF4E8),
+          borderRadius: BorderRadius.circular(10),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            child: Row(
+              children: [
+                const Icon(Icons.warning_amber_rounded,
+                    color: Color(0xFFC64A2E), size: 16),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    'Your last capture ended unexpectedly. This note was restored from this device, but the most recent speech may be missing.',
+                    style: TextStyle(fontSize: 13, height: 1.4),
+                  ),
+                ),
+                InkResponse(
+                  onTap: onDismiss,
+                  radius: 18,
+                  child: const Padding(
+                    padding: EdgeInsets.all(4),
+                    child: Icon(Icons.close, size: 16, color: Colors.black54),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+}

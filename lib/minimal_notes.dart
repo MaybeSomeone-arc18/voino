@@ -56,6 +56,8 @@ class MinimalNotes extends StatelessWidget {
               tooltip: 'Board files',
               onSelected: onFile,
               itemBuilder: (_) => const [
+                PopupMenuItem(value: 'notes', child: Text('Download notes (.txt)')),
+                PopupMenuItem(value: 'recent', child: Text('Recent notes on this device')),
                 PopupMenuItem(value: 'copy', child: Text('Copy board JSON')),
                 PopupMenuItem(value: 'save', child: Text('Save board JSON')),
                 PopupMenuItem(value: 'open', child: Text('Open board file')),

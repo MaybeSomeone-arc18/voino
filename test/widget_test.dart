@@ -6,6 +6,7 @@ import 'package:http/testing.dart';
 import 'package:voino/board.dart';
 import 'package:voino/gemini.dart';
 import 'package:voino/logic.dart';
+import 'package:voino/main.dart' show shouldSkipAutoGenerate;
 
 const lecture = 'Um so photosynthesis means plants use sunlight to make energy. '
     'Photosynthesis happens in the chloroplast of plant cells. '
@@ -41,6 +42,72 @@ void main() {
   });
 
   group('local notes', () {
+    test('auto-generate skips only after the AI question is settled', () {
+      // Live local notes ran on this transcript; the AI/consent decision has
+      // not happened yet, so a stop-time pass must still run.
+      expect(
+        shouldSkipAutoGenerate(
+          boardEdited: false,
+          src: 'some discussion',
+          lastSource: 'some discussion',
+          aiSettledSource: '',
+        ),
+        isFalse,
+      );
+      // Settled (AI ran or consent declined): skip redundant re-runs.
+      expect(
+        shouldSkipAutoGenerate(
+          boardEdited: false,
+          src: 'some discussion',
+          lastSource: 'some discussion',
+          aiSettledSource: 'some discussion',
+        ),
+        isTrue,
+      );
+      // New speech since the last run: never skip.
+      expect(
+        shouldSkipAutoGenerate(
+          boardEdited: false,
+          src: 'some discussion and more',
+          lastSource: 'some discussion',
+          aiSettledSource: 'some discussion',
+        ),
+        isFalse,
+      );
+      // Hand-edited board is never overwritten by an automatic pass.
+      expect(
+        shouldSkipAutoGenerate(
+          boardEdited: true,
+          src: 'x',
+          lastSource: 'y',
+          aiSettledSource: '',
+        ),
+        isTrue,
+      );
+    });
+
+    test('meeting openers are neither actions nor points', () {
+      final n = makeNotes(
+        'All right, everyone, let us start the launch review. '
+        'Priya will finish the pitch deck by Thursday.',
+      );
+      expect(n.actions, ['Priya will finish the pitch deck by Thursday.']);
+      expect(n.points.where((p) => p.contains('let us start')), isEmpty);
+      expect(n.actions.where((a) => a.contains('let us start')), isEmpty);
+    });
+
+    test('"review" counts only as a verb with an object, not as a noun', () {
+      final noun = makeNotes(
+        'The design review went well. '
+        'The team agreed to pause the referral bonus review until after the launch. '
+        'We need to fix the onboarding copy.',
+      );
+      expect(noun.actions, ['We need to fix the onboarding copy.']);
+
+      final verb = makeNotes('Please review the deck before Friday.');
+      expect(verb.actions, ['Please review the deck before Friday.']);
+    });
+
     test('separates actions, strips filler, keeps source wording', () {
       final n = makeNotes(lecture);
       expect(n.actions, ['Remember to submit the biology worksheet Friday.']);

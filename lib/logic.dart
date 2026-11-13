@@ -66,7 +66,10 @@ class Note {
 }
 
 final _action = RegExp(
-    r'\b(?:need to|have to|should|must|remember to|assignment|deadline|submit|send|finish|prepare|review|complete|due)\b',
+    r'\b(?:need to|have to|should|must|remember to|assignment|deadline|submit|send|finish|prepare|complete|due)\b'
+    // "review" only counts as a verb with an object ("review the deck"), not
+    // as a noun ("the design review", "the bonus review").
+    r'|\breview(?:ing)?\s+(?:the|a|an|this|that|these|those|your|my|our|their)\b',
     caseSensitive: false);
 
 /// Hindi (Devanagari) and romanized Hinglish action cues. Devanagari has no \b word
@@ -76,6 +79,13 @@ final _actionHindi = RegExp(
     r'|\b(?:karna hai|karna hoga|karna padega|karna chahiye|karni hai|karni hogi|bhejna hai|bhejna hoga|bhejni hai|jama karna|submit karna|complete karna|finish karna|yaad rakhna|zaroor|zarur|jaruri|zaruri|deadline|assignment)\b',
     caseSensitive: false);
 bool isActionSentence(String s)=> _isAction(s);
+
+/// Meeting kickoffs and pleasantries that carry no decision or work item.
+final _opener = RegExp(
+    r'^(?:(?:all ?right|alright|okay|ok|so|right|hello|hi|hey|good (?:morning|afternoon|evening))\b[\s,]*)*'
+    r'(?:(?:everyone|everybody|guys|team|folks)\b[\s,]*)*'
+    r"let(?: us|'s) (?:start|begin|kick off|get started|get going)\b",
+    caseSensitive: false);
 bool _isAction(String s) => _action.hasMatch(s) || _actionHindi.hasMatch(s);
 final _filler = RegExp(r'^(?:(?:um+|uh+|er+|okay|ok|so|well|like|right|anyway|you know|i mean)\b[,\s]*)+', caseSensitive: false);
 final _word = RegExp(r"[a-z][a-z']{2,}|[\u0900-\u097F]{2,}");
@@ -107,12 +117,39 @@ Note makeNotes(String transcript, [String title = 'New note']) {
       .allMatches(src)
       .map((m) => _capitalize(m.group(0)!.trim().replaceFirst(_filler, '').trim()))
       .where((s) => s.isNotEmpty)
+      // Meeting openers ("All right everyone, let us start the review.") are
+      // noise: they are neither decisions nor work items.
+      .where((s) => !_opener.hasMatch(s))
       .toList();
   final long = sentences.where((s) => s.split(' ').length >= 3).toList();
   if (long.isNotEmpty) sentences = long;
 
-  final actions = {...sentences.where(_isAction)}.toList();
-  final candidates = {...sentences.where((s) => !actions.contains(s))}.toList();
+  // Orphan guard: a bare deadline cue that points back with "that/this/it"
+  // ("The deadline for that is Wednesday.") merges into the sentence it
+  // refers to, instead of surfacing as a context-free action.
+  final backRef = RegExp(r'\b(?:that|this|it)\b', caseSensitive: false);
+  final deadlineCue = RegExp(r'\b(?:deadline|due)\b|डेडलाइन|आखिरी तारीख', caseSensitive: false);
+  final actions = <String>[];
+  final absorbed = <String>{}; // sentences folded into an action; not points
+  String? prev;
+  for (final s in sentences) {
+    if (_isAction(s)) {
+      final orphan = backRef.hasMatch(s) && deadlineCue.hasMatch(s) && s.split(' ').length <= 10;
+      if (orphan && prev != null) {
+        if (_isAction(prev) && actions.isNotEmpty) {
+          actions[actions.length - 1] = '${actions.last} $s';
+          absorbed.add(s);
+        } else if (!_isAction(prev)) {
+          actions.add('$prev $s');
+          absorbed..add(prev)..add(s);
+        }
+      } else if (!actions.contains(s)) {
+        actions.add(s);
+      }
+    }
+    prev = s;
+  }
+  final candidates = {...sentences.where((s) => !actions.contains(s) && !absorbed.contains(s))}.toList();
 
   final freq = <String, int>{};
   for (final s in candidates) {

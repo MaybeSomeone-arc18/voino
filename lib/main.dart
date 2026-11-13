@@ -21,6 +21,8 @@ import 'glass.dart';
 import 'ask_notes.dart';
 import 'minimal_notes.dart';
 import 'listening_session.dart';
+import 'auto_notes.dart';
+import 'draft_history.dart';
 import 'local_draft.dart';
 import 'pro_access.dart';
 import 'revenuecat_backend.dart';
@@ -28,6 +30,31 @@ import 'live_transcript.dart';
 import 'stats.dart';
 
 void main() => runApp(const VoinoApp());
+
+/// Whether a non-manual generate (e.g. on stop) is redundant. Live LOCAL
+/// notes use the same transcript and must NOT suppress the final AI pass:
+/// skipping requires the AI-or-consent question to be settled for this
+/// exact transcript.
+bool shouldSkipAutoGenerate({
+  required bool boardEdited,
+  required String src,
+  required String lastSource,
+  required String aiSettledSource,
+}) {
+  if (boardEdited) return true;
+  return src == lastSource && aiSettledSource == src;
+}
+
+/// Confirm text for Clear. When archiving the current note would push the
+/// oldest saved note out of a full Recent notes list, say so up front.
+String clearConfirmText({required bool willEvict, String? oldestTitle}) {
+  const base =
+      'Clear everything: transcript, notes, board and drawings? The current note moves to Recent notes on this device.';
+  if (willEvict && oldestTitle != null) {
+    return "$base Recent notes is full, so the oldest one, '$oldestTitle', will be removed to make room.";
+  }
+  return base;
+}
 
 class VoinoApp extends StatelessWidget {
   const VoinoApp({super.key});
@@ -42,6 +69,12 @@ class VoinoApp extends StatelessWidget {
 
 /// Plain-language note for the common microphone failures, so a first-time
 /// visitor is not left staring at a raw error code.
+String notesActionLabel({required bool busy, required bool hasNotes, required bool stale}) {
+  if (busy) return 'Working...';
+  if (!hasNotes) return 'Make board';
+  return stale ? 'Update notes' : 'Notes up to date';
+}
+
 String friendlyMicNote(String raw) {
   final e = raw.toLowerCase();
   if (e.contains('not-allowed') ||
@@ -73,10 +106,15 @@ class Home extends StatefulWidget {
 class _HomeState extends State<Home> with WidgetsBindingObserver {
   final draft = LocalDraft();
   bool draftTouched = false, restoringDraft = false;
+  // Set while a capture is open; persisted inside the draft so a crash or
+  // kill mid-capture is detectable on the next launch.
+  bool draftInterrupted = false, _captureActive = false;
   late final ProAccess pro;
   final stats = Stats();
   bool _sessionCounted = false;
   bool _autoRoutedToGemini = false;
+  final _autoNotes = AutoNotes();
+  final history = DraftHistory();
   late final ListeningSession deviceSession;
   final title = TextEditingController(), transcript = TextEditingController();
   final speech = SpeechToText();
@@ -95,6 +133,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
   String view = 'listen'; // listen | notes | board
   String summary = '', noteSource = '';
   String before = '', lastSource = '', status = idleStatus;
+  String _aiSettledSource = '';
   final board = BoardController();
   List<CardModel> get cards => board.cards;
   List<Link> get links => board.links;
@@ -140,6 +179,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
         if (mounted && words.trim().isNotEmpty) {
           setState(() => transcript.text = stitchSpeech(before, words));
           _maybeRouteToGemini(words);
+          _maybeAutoNotes();
         }
       },
     );
@@ -177,6 +217,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     'summary': summary,
     'source': noteSource,
     'lastSource': lastSource,
+    'captureActive': _captureActive,
   };
 
   void _draftChanged() {
@@ -185,7 +226,22 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     draft.changed(_draftData());
   }
 
+  // Tracks capture open/closed inside the persisted draft. Flushed
+  // immediately (not debounced): the flag must reach storage before the
+  // renderer can die, or an interrupted session would look like a clean one.
+  void _setCaptureActive(bool v) {
+    if (v == _captureActive) return;
+    _captureActive = v;
+    if (v && draftInterrupted) draftInterrupted = false; // new capture supersedes
+    if (draft.ready && !restoringDraft) {
+      draft.changed(_draftData());
+      draft.flush();
+    }
+    if (mounted) setState(() {});
+  }
+
   Future<void> _restoreDraft() async {
+    await history.load();
     final value = await draft.load();
     if (!mounted) return;
     if (draftTouched) {
@@ -206,6 +262,14 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
       view = 'notes';
     });
     restoringDraft = false;
+    if (value['captureActive'] == true) {
+      // The previous session ended with a capture still open: crash, kill
+      // or power loss. Warn once, then clear the flag in storage.
+      _captureActive = false;
+      draftInterrupted = true;
+      draft.changed(_draftData());
+      await draft.flush();
+    }
   }
 
   /// The browser's English speech service mangles Hindi. When real
@@ -246,6 +310,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
         listening = deviceSession.requested;
         micNote = deviceSession.message;
       });
+      _setCaptureActive(deviceSession.requested);
       // Cloud speech is unreachable: switch to on-device Whisper and start it.
       if (kIsWeb &&
           WhisperEngine.supported &&
@@ -286,6 +351,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
             micNote = 'Paused in background. Tap to resume.';
           });
       }
+      _setCaptureActive(false);
     }
   }
 
@@ -389,6 +455,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
         listening = false;
         micNote = '';
       });
+      _setCaptureActive(false);
       generate(manual: false);
       return;
     }
@@ -404,6 +471,11 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
             setState(
               () => transcript.text = stitchSpeech(transcript.text, clean),
             );
+          // Persist each finalized segment immediately: on a stalled or
+          // crashing renderer the 500ms debounce may never fire, and an
+          // in-progress capture would be lost up to the last flush.
+          draft.flush();
+          _maybeAutoNotes();
         },
         onProgress: (p) {
           if (mounted)
@@ -419,6 +491,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
         },
       );
       stats.sessionStarted();
+      _setCaptureActive(true);
     } catch (e) {
       if (mounted) {
         final raw = '$e'.replaceFirst('Exception: ', '');
@@ -437,6 +510,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     if (_webAsr) return toggleWhisper();
     if (deviceSession.requested) {
       await deviceSession.stop();
+      _autoNotes.reset();
       if (mounted) generate(manual: false);
     } else {
       await deviceSession.start();
@@ -468,7 +542,17 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
       if (manual) _msg('Speak, paste or type some words first.');
       return;
     }
-    if (!manual && (boardEdited || src == lastSource)) return;
+    if (!manual &&
+        shouldSkipAutoGenerate(
+          boardEdited: boardEdited,
+          src: src,
+          lastSource: lastSource,
+          aiSettledSource: _aiSettledSource,
+        ))
+      return;
+    final aiEligible =
+        (settings.useAi && settings.keys.isNotEmpty) ||
+        (settings.useProxy && defaultProxyUrl() != null);
     if (manual &&
         (cards.isNotEmpty || shapes.isNotEmpty) &&
         boardEdited &&
@@ -479,10 +563,17 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     }
     var useKeys = settings.useAi && settings.keys.isNotEmpty;
     var useProxy = settings.useProxy && defaultProxyUrl() != null;
+    // Whatever happens next - AI success, AI failure, or a declined consent -
+    // the AI question is settled for this transcript; do not re-ask on the
+    // next stop. Manual taps still re-run everything.
+    if (aiEligible) _aiSettledSource = src;
     if (useKeys && !settings.consented) {
       if (await confirm(
-        'Send this transcript to Google Gemini using your API key to write a summary? '
-        'It leaves your device; on the free tier Google may use it to improve its products. Choose Cancel to skip it.',
+        'Send this transcript to Google Gemini with your API key to write a summary? It leaves your device. '
+        'On Google\'s free tier, Google may use it to improve its products and human reviewers may read it - '
+        'do not send sensitive or confidential discussions there. Choose Cancel to keep the notes on this device instead. '
+        'Note: speech recognition itself may already have used your device or browser vendor\'s online service. '
+        'You are asked once; reset anytime in Settings.',
       )) {
         settings.consented = true;
         await persistSettings();
@@ -493,7 +584,10 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     if (useProxy && !settings.proxyConsented) {
       if (await confirm(
         'Send this transcript to the Voino server, which forwards it to Google Gemini to write a summary? '
-        'It leaves your device; the server does not keep it. On the free tier Google may use it to improve its products. Choose Cancel to skip it.',
+        'It leaves your device; Voino\'s app code does not store the transcript. On Google\'s free tier, Google may use '
+        'it to improve its products and human reviewers may read it - do not send sensitive or confidential discussions there. '
+        'Choose Cancel to keep the notes on this device instead. Note: speech recognition itself may already have used '
+        'your device or browser vendor\'s online service. You are asked once; reset anytime in Settings.',
       )) {
         settings.proxyConsented = true;
         await persistSettings();
@@ -539,11 +633,128 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     _draftChanged();
   }
 
-  Future<void> clearAll() async {
-    if (!await confirm(
-      'Clear everything: transcript, notes, board and drawings? Download first if you want to keep them.',
-    ))
+  /// True when the transcript changed after the current notes were made.
+  bool get notesStale {
+    final src = cleanSpeech(transcript.text.trim());
+    return lastSource.isNotEmpty && src.isNotEmpty && src != lastSource;
+  }
+
+  /// Refreshes notes from the live transcript while still listening, using
+  /// the local extractor: instant, free, and no consent dialogs mid-talk.
+  /// The full AI pass runs when listening stops.
+  void _maybeAutoNotes() {
+    if (!listening || busy) return;
+    final src = cleanSpeech(transcript.text.trim());
+    if (src.isEmpty || boardEdited || src == lastSource || !_autoNotes.due(src)) return;
+    _autoNotes.markRun(src);
+    final n = makeNotes(src, title.text);
+    setState(() {
+      board.replace(buildBoard(n));
+      summary = n.summary;
+      noteSource = 'Live notes (local). AI summary may run when you stop.';
+      lastSource = src;
+      status = 'Notes updated while you speak.';
+    });
+    _draftChanged();
+  }
+
+  void _applyHistoryDraft(Map<String, dynamic> value) {
+    final parsed = parseBoardJson(jsonEncode(value));
+    if (parsed == null) {
+      _msg('That recent note could not be opened.');
       return;
+    }
+    restoringDraft = true;
+    title.text = parsed.title;
+    transcript.text = parsed.transcript;
+    board.replace(parsed.board);
+    setState(() {
+      summary = value['summary'] is String ? value['summary'] : '';
+      noteSource = value['source'] is String ? value['source'] : '';
+      lastSource = value['lastSource'] is String ? value['lastSource'] : '';
+      board.edited = false;
+      view = 'notes';
+    });
+    restoringDraft = false;
+    _draftChanged();
+  }
+
+  Future<void> openRecentNotes() async {
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AnimatedBuilder(
+        animation: history,
+        builder: (ctx, _) => SimpleDialog(
+          title: const Text('Recent notes on this device'),
+          children: [
+            if (history.entries.isEmpty)
+              const Padding(
+                padding: EdgeInsets.fromLTRB(24, 0, 24, 16),
+                child: Text('Nothing here yet. Cleared notes are kept here - up to five, on this device only.'),
+              )
+            else
+              for (final e in history.entries)
+                ListTile(
+                  title: Text(e.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  subtitle: Text(formatSavedAt(e.savedAt)),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.delete_outline),
+                    tooltip: 'Delete',
+                    onPressed: () => history.remove(e.id),
+                  ),
+                  onTap: () async {
+                    Navigator.of(ctx).pop();
+                    // Keep the note being replaced: archive the current one
+                    // first (archive() skips it when empty or unchanged). If
+                    // that would push the oldest saved note out of a full
+                    // list, say so before opening.
+                    if (history.wouldEvictOnArchive(_draftData()) &&
+                        !await confirm(
+                          "Opening this keeps your current note in Recent notes. The list is full, so the oldest one, '${history.entries.last.title}', will be removed to make room.",
+                        ))
+                      return;
+                    await history.archive(_draftData());
+                    _applyHistoryDraft(e.draft);
+                  },
+                ),
+            if (history.entries.isNotEmpty)
+              const Padding(
+                padding: EdgeInsets.fromLTRB(24, 4, 24, 12),
+                child: Text('Tap a note to open it - the note you were working on is kept here too. Up to five are kept.',
+                    style: TextStyle(fontSize: 12, color: Colors.black54)),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> downloadNotes() async {
+    final n = currentNote();
+    final name = title.text.trim().isEmpty
+        ? 'voino-notes'
+        : title.text.trim().replaceAll(RegExp(r'[^A-Za-z0-9-]+'), '-');
+    try {
+      await FileSaver.instance.saveFile(
+        name: name,
+        bytes: Uint8List.fromList(utf8.encode(exportText(n))),
+        fileExtension: 'txt',
+        mimeType: MimeType.text,
+      );
+      _msg('Notes downloaded');
+    } catch (e) {
+      _msg('Could not save the file ($e). Use Copy notes instead.');
+    }
+  }
+
+  Future<void> clearAll() async {
+    final willEvict = history.wouldEvictOnArchive(_draftData());
+    if (!await confirm(clearConfirmText(
+      willEvict: willEvict,
+      oldestTitle: willEvict ? history.entries.last.title : null,
+    )))
+      return;
+    await history.archive(_draftData());
     if (listening) {
       if (_webAsr) {
         await WhisperEngine.stop();
@@ -560,12 +771,16 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
       noteSource = '';
       busy = false;
       lastSource = '';
+      _aiSettledSource = '';
       listening = false;
       micNote = '';
       status = idleStatus;
       view = 'listen';
       _autoRoutedToGemini = false;
+      draftInterrupted = false;
+      _captureActive = false;
     });
+    _autoNotes.reset();
     _draftChanged();
     await draft.flush();
   }
@@ -707,6 +922,10 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
       onBoard: generate,
       onFile: (action) {
         switch (action) {
+          case 'recent':
+            openRecentNotes();
+          case 'notes':
+            downloadNotes();
           case 'copy':
             copyBoardJson();
           case 'save':
@@ -758,6 +977,19 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                         : Icons.tune,
                   ),
                 ),
+                if (listening && view != 'listen')
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 8, 24, 0),
+                    child: Align(
+                      alignment: Alignment.topCenter,
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 720),
+                        child: ListeningBanner(
+                          onTap: () => setState(() => view = 'listen'),
+                        ),
+                      ),
+                    ),
+                  ),
                 Expanded(
                   child: AnimatedSwitcher(
                     duration: const Duration(milliseconds: 350),
@@ -773,6 +1005,20 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                               children: [
                                 _tabs(),
                                 const SizedBox(height: 16),
+                                if (view == 'notes' && draftInterrupted)
+                                  Align(
+                                    alignment: Alignment.topCenter,
+                                    child: ConstrainedBox(
+                                      constraints: const BoxConstraints(
+                                        maxWidth: 720,
+                                      ),
+                                      child: InterruptedCaptureBanner(
+                                        onDismiss: () => setState(
+                                          () => draftInterrupted = false,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
                                 if (view == 'board')
                                   _boardSection()
                                 else
@@ -836,7 +1082,11 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                   const SizedBox(width: 10),
                   Expanded(
                     child: GlassButton(
-                      label: busy ? 'Working...' : 'Make board',
+                      label: notesActionLabel(
+                        busy: busy,
+                        hasNotes: summary.isNotEmpty || cards.isNotEmpty,
+                        stale: notesStale,
+                      ),
                       ink: ink,
                       primary: true,
                       onPressed: busy ? null : generate,

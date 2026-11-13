@@ -99,6 +99,106 @@ Note noteFromGeminiJson(Map<String, dynamic> j, String transcript, String fallba
   );
 }
 
+
+/// Splits a long transcript into chunks of at most [maxChars], breaking at
+/// sentence boundaries when possible so no sentence is cut in half.
+List<String> chunkTranscript(String src, {int maxChars = _maxTranscript}) {
+  final text = src.trim();
+  if (text.isEmpty) return [];
+  if (text.length <= maxChars) return [text];
+  final sentences = RegExp(r'[^.!?\n]+[.!?]+[\s]*|[^.!?\n]+\n+|[^.!?\n]+$')
+      .allMatches(text)
+      .map((m) => m.group(0)!)
+      .toList();
+  final chunks = <String>[];
+  final b = StringBuffer();
+  for (final s in sentences) {
+    if (s.length > maxChars) {
+      // A single over-long sentence: hard-split it so nothing is dropped.
+      if (b.isNotEmpty) {
+        chunks.add(b.toString().trim());
+        b.clear();
+      }
+      for (var i = 0; i < s.length; i += maxChars) {
+        chunks.add(s.substring(i, i + maxChars > s.length ? s.length : i + maxChars).trim());
+      }
+      continue;
+    }
+    if (b.length + s.length > maxChars && b.isNotEmpty) {
+      chunks.add(b.toString().trim());
+      b.clear();
+    }
+    b.write(s);
+  }
+  if (b.isNotEmpty) chunks.add(b.toString().trim());
+  return chunks.where((c) => c.isNotEmpty).toList();
+}
+
+/// Merges per-chunk notes into one faithful note: every chunk's points and
+/// actions survive (deduped), topic groups and links are re-indexed onto the
+/// combined point list, and chunk summaries join into one paragraph.
+Note mergePartNotes(List<Note> parts, String title, String transcript) {
+  if (parts.length == 1) return parts.single;
+  final points = <String>[];
+  final actions = <String>[];
+  final topics = <Topic>[];
+  final links = <NoteLink>[];
+  int? keyPoint;
+  final seen = <String>{};
+  for (final p in parts) {
+    final base = points.length;
+    for (final point in p.points) {
+      if (seen.add(point.toLowerCase())) points.add(point);
+    }
+    for (final a in p.actions) {
+      if (seen.add('a:${a.toLowerCase()}')) actions.add(a);
+    }
+    for (final t in p.topics) {
+      topics.add(Topic(t.name, [for (final i in t.points) base + i]));
+    }
+    for (final l in p.links) {
+      links.add(NoteLink(base + l.from, base + l.to, l.label));
+    }
+    keyPoint ??= p.keyPoint != null ? base + p.keyPoint! : null;
+  }
+  final summary = parts
+      .map((p) => p.summary.trim())
+      .where((s) => s.isNotEmpty)
+      .join(' ');
+  final named = cleanSpeech(title);
+  return Note(
+    named.isNotEmpty && named != 'New note' ? named : parts.first.title,
+    points,
+    actions,
+    cleanSpeech(transcript),
+    summary: summary,
+    topics: topics,
+    links: links,
+    keyPoint: keyPoint,
+    source: parts.every((p) => p.source == 'ai') ? 'ai' : 'rule',
+  );
+}
+
+/// Summarizes a transcript of any length: short input goes through one call,
+/// long input is chunked (never truncated) and the part notes are merged.
+/// [one] summarizes a single chunk that fits the underlying limit.
+Future<Note> summarizeLong(
+  String src,
+  String title,
+  Future<Note> Function(String chunk) one, {
+  int maxChars = _maxTranscript,
+  void Function(int done, int total)? onPart,
+}) async {
+  final chunks = chunkTranscript(src, maxChars: maxChars);
+  if (chunks.length <= 1) return one(chunks.isEmpty ? src : chunks.single);
+  final parts = <Note>[];
+  for (var i = 0; i < chunks.length; i++) {
+    parts.add(await one(chunks[i]));
+    onPart?.call(i + 1, chunks.length);
+  }
+  return mergePartNotes(parts, title, src);
+}
+
 /// Calls Gemini directly with user-supplied keys, rotating to the next key on any failure.
 class GeminiClient {
   GeminiClient(List<String> keys, {http.Client? client, this.model = 'gemini-3.5-flash'})
@@ -109,9 +209,15 @@ class GeminiClient {
   final http.Client _client;
   static int _next = 0;
 
+  int lastParts = 1;
+
   Future<Note> summarize(String transcript, {String title = 'New note'}) async {
     if (keys.isEmpty) throw GeminiException('No Gemini API key set.');
-    final text = transcript.length > _maxTranscript ? transcript.substring(0, _maxTranscript) : transcript;
+    lastParts = chunkTranscript(transcript).length;
+    return summarizeLong(transcript, title, (chunk) => _summarizeOne(chunk, title));
+  }
+
+  Future<Note> _summarizeOne(String text, String title) async {
     final body = jsonEncode({
       'systemInstruction': {'parts': [{'text': _prompt}]},
       'contents': [{'role': 'user', 'parts': [{'text': text}]}],
@@ -133,7 +239,7 @@ class GeminiClient {
           final data = jsonDecode(res.body) as Map<String, dynamic>;
           final raw = data['candidates']?[0]?['content']?['parts']?[0]?['text'];
           if (raw is! String) throw GeminiException('Gemini returned no text.');
-          return noteFromGeminiJson(jsonDecode(raw) as Map<String, dynamic>, transcript, title);
+          return noteFromGeminiJson(jsonDecode(raw) as Map<String, dynamic>, text, title);
         }
         last = GeminiException('Gemini error ${res.statusCode}', res.statusCode);
       } on GeminiException catch (e) {
@@ -180,7 +286,17 @@ class ProxyClient {
   final Uri url;
   final http.Client _client;
 
+  /// The hosted summarizer accepts about 12,000 characters per call.
+  static const proxyMaxChars = 11000;
+  int lastParts = 1;
+
   Future<Note> summarize(String transcript, {String title = 'New note'}) async {
+    lastParts = chunkTranscript(transcript, maxChars: proxyMaxChars).length;
+    return summarizeLong(transcript, title, (chunk) => _summarizeOne(chunk, title),
+        maxChars: proxyMaxChars);
+  }
+
+  Future<Note> _summarizeOne(String transcript, String title) async {
     http.Response res;
     try {
       res = await _client
@@ -219,15 +335,19 @@ Future<({Note note, String how})> summarizeWithFallback(
 }) async {
   final errors = <String>[];
   if (useKeys && keys.isNotEmpty) {
+    final g = GeminiClient(keys, client: client);
     try {
-      return (note: await GeminiClient(keys, client: client).summarize(src, title: title), how: 'AI summary (Gemini, your key)');
+      final n = await g.summarize(src, title: title);
+      return (note: n, how: 'AI summary (Gemini, your key${g.lastParts > 1 ? ', ${g.lastParts} parts' : ''})');
     } catch (e) {
       errors.add('$e');
     }
   }
   if (useProxy && proxyUrl != null) {
+    final p = ProxyClient(proxyUrl, client: client);
     try {
-      return (note: await ProxyClient(proxyUrl, client: client).summarize(src, title: title), how: 'AI summary (Voino server)');
+      final n = await p.summarize(src, title: title);
+      return (note: n, how: 'AI summary (Voino server${p.lastParts > 1 ? ', ${p.lastParts} parts' : ''})');
     } catch (e) {
       errors.add('$e');
     }

@@ -6,12 +6,10 @@
 // segment is re-transcribed and shown as a PARTIAL result right away; when the speaker pauses
 // (or the segment reaches MAX_SEG_S) the segment is transcribed once more and committed as FINAL.
 const TRANSFORMERS = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1/dist/transformers.min.js';
-// Local engines. 'multi' is the stock multilingual tiny (MIT). 'hinglish' is a Hinglish fine-tune of
-// whisper-tiny (abhishekgautamm/whisper-tiny-hinglish, MIT - credit Abhishek Gautam and the MUCS
-// dataset), converted to quantized ONNX and lazy-loaded from huggingface.co on first use.
+// Local engines. 'multi' is the stock multilingual tiny (MIT), lazy-loaded from huggingface.co on first use.
+// The 'hinglish' variant is temporarily removed while its upstream training-data licensing is reviewed.
 const VARIANTS = {
   multi: { label: 'Stock tiny (MIT)', model: 'Xenova/whisper-tiny', lang: 'hi' },
-  hinglish: { label: 'Hinglish tiny (MIT)', model: 'MaybeSomeone19/whisper-tiny-hinglish-onnx', lang: null },
   gemini: { label: 'Gemini (cloud, free tier)', cloud: true, lang: null },
   vaani: { label: 'Vaani Hindi tiny (Apache-2.0)', model: 'vaani', local: true, lang: 'hi' },
 };

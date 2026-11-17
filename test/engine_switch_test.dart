@@ -22,7 +22,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100)); // mid-animation
     await tester.pumpAndSettle();
     expect(engine, 'whisper');
-    expect(find.text('On-device: private, no internet after the first download'), findsOneWidget);
+    expect(find.text('On-device: private, speech recognition runs on this device; setup needs internet'), findsOneWidget);
   });
 
   testWidgets('third option selects gemini and shows its hint', (tester) async {

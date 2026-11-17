@@ -1,5 +1,6 @@
 // Speech stitching and local (no-network) note extraction.
 
+import 'dart:convert';
 import 'dart:math' as math;
 
 String cleanSpeech(String? v) => (v ?? '').replaceAll(RegExp(r'\s+'), ' ').trim();
@@ -7,8 +8,125 @@ List<String> _tokens(String t) => cleanSpeech(t).split(' ').where((x) => x.isNot
 bool _eq(String a, String b) => a.toLowerCase() == b.toLowerCase();
 
 /// Removes Whisper's non-speech tags such as [BLANK_AUDIO], (music) and musical-note marks.
+/// Keeps pipeline gap markers ([gap a-b not transcribed]): those are loss accounting, not hallucination tags.
 String cleanWhisperText(String? raw) =>
-    cleanSpeech((raw ?? '').replaceAll(RegExp(r'\[[^\]]*\]|\([^)]*\)|[\u266A\u266B]+'), ' '));
+    cleanSpeech((raw ?? '').replaceAll(RegExp(r'\[(?!gap )[^\]]*\]|\([^)]*\)|[\u266A\u266B]+'), ' '));
+
+/// Replaces the [nth] (0-based) occurrence of [needle] in [hay] with [repl],
+/// or returns [hay] unchanged when that occurrence does not exist.
+String replaceNthOccurrence(String hay, String needle, int nth, String repl) {
+  var i = -1;
+  for (var k = 0; k <= nth; k++) {
+    i = hay.indexOf(needle, i + 1);
+    if (i < 0) return hay;
+  }
+  return hay.substring(0, i) + repl + hay.substring(i + needle.length);
+}
+
+/// Fail-closed gate for stop-time gap recovery. String matching cannot
+/// distinguish identical markers (a reordered pair, or one left over from an
+/// earlier capture in the same note), so rewrites are allowed only when
+/// identity is certain: the payload belongs to the current capture session
+/// and no user edit, Clear, or draft load has touched the transcript since
+/// that capture began. Anything else leaves the markers (and the user's
+/// text) exactly as they are.
+bool recoveryAllowed({
+  required int payloadSid,
+  required int currentSid,
+  required int revAtCaptureStart,
+  required int currentUserRev,
+}) =>
+    payloadSid == currentSid && currentUserRev == revAtCaptureStart;
+
+/// Fail-closed staleness check for asynchronous note generation.
+/// generate() snapshots the transcript, then awaits (consent dialogs, a
+/// network summary). Identity is the document revision, NOT the text: a
+/// Clear followed by a restore or retype of identical text is a NEW
+/// document, and notes generated from the old snapshot must never be
+/// applied over it. [revAtStart] is transcriptUserRev at snapshot time;
+/// any user edit, Clear, or draft load inside the await window increments
+/// it, while programmatic ASR appends and recovery rewrites do not.
+bool generationStale(int revAtStart, int currentRev) =>
+    revAtStart != currentRev;
+
+/// The real handler behind WhisperEngine's onRecover callback: decodes the
+/// payload and returns the rewritten transcript, or null when the rewrite is
+/// rejected (stale session, user edit/Clear/draft load since capture start,
+/// malformed payload, or a marker identity that no longer matches). Returning
+/// null always leaves the transcript untouched.
+String? recoveryRewrite(
+  String transcript,
+  String payloadJson, {
+  required int currentSid,
+  required int revAtCaptureStart,
+  required int currentUserRev,
+}) {
+  final Object? decoded;
+  try {
+    decoded = jsonDecode(payloadJson);
+  } catch (_) {
+    return null; // malformed payload: leave everything as is
+  }
+  final sid = decoded is Map ? decoded['sid'] as int? : null;
+  final ops = decoded is Map && decoded['ops'] is List
+      ? (decoded['ops'] as List)
+          .whereType<Map>()
+          .map((e) => e.cast<String, dynamic>())
+          .toList()
+      : <Map<String, dynamic>>[];
+  if (ops.isEmpty) return null;
+  if (!recoveryAllowed(
+    payloadSid: sid ?? -1,
+    currentSid: currentSid,
+    revAtCaptureStart: revAtCaptureStart,
+    currentUserRev: currentUserRev,
+  )) {
+    return null;
+  }
+  final rewritten = applyGapRecoveries(transcript, ops);
+  return rewritten == transcript ? null : rewritten;
+}
+
+/// Applies stop-time gap-marker rewrites ([ops]: {str, nth, total, repl}) to the
+/// transcript. Fail-safe: for each distinct marker string, every rewrite is
+/// skipped unless the transcript still holds exactly `total` occurrences of it
+/// (an edited, deleted, or duplicated marker changes that count). Replacements
+/// are applied by ascending position so rewrites never shift each other, even
+/// when a replacement itself contains a marker string.
+String applyGapRecoveries(String transcript, List<Map<String, dynamic>> ops) {
+  final byStr = <String, List<Map<String, dynamic>>>{};
+  for (final op in ops) {
+    byStr.putIfAbsent(op['str'] as String, () => []).add(op);
+  }
+  final edits = <int, MapEntry<int, String>>{}; // position -> (length, replacement)
+  for (final e in byStr.entries) {
+    final positions = <int>[];
+    var i = -1;
+    while ((i = transcript.indexOf(e.key, i + 1)) >= 0) {
+      positions.add(i);
+    }
+    final total = e.value.first['total'] as int;
+    if (positions.length != total) continue; // user touched these markers: leave their text alone
+    for (final op in e.value) {
+      final nth = op['nth'] as int;
+      if (nth < 0 || nth >= positions.length) continue;
+      edits[positions[nth]] = MapEntry(e.key.length, op['repl'] as String);
+    }
+  }
+  if (edits.isEmpty) return transcript;
+  final sorted = edits.keys.toList()..sort();
+  final b = StringBuffer();
+  var cursor = 0;
+  for (final pos in sorted) {
+    if (pos < cursor) continue;
+    b.write(transcript.substring(cursor, pos));
+    final edit = edits[pos]!;
+    b.write(edit.value);
+    cursor = pos + edit.key;
+  }
+  b.write(transcript.substring(cursor));
+  return b.toString();
+}
 
 String stitchSpeech(String previous, String incoming) {
   final a = _tokens(previous), b = _tokens(incoming);
@@ -113,8 +231,13 @@ Note makeNotes(String transcript, [String title = 'New note']) {
   final t = cleanSpeech(title).isEmpty ? 'New note' : cleanSpeech(title);
   if (src.isEmpty) return Note(t, [], [], '');
 
+  // Gap markers are loss accounting, not content: extract them whole (sentence
+  // splitting would fragment them at the decimal points) and always show them.
+  final gapMarks = RegExp(r'\[gap [^\]]*\]').allMatches(src).map((m) => m.group(0)!).toList();
+  final srcForSplit = gapMarks.isEmpty ? src : src.replaceAll(RegExp(r'\[gap [^\]]*\]'), ' ');
+
   var sentences = RegExp(r'[^.!?।]+[.!?।]?')
-      .allMatches(src)
+      .allMatches(srcForSplit)
       .map((m) => _capitalize(m.group(0)!.trim().replaceFirst(_filler, '').trim()))
       .where((s) => s.isNotEmpty)
       // Meeting openers ("All right everyone, let us start the review.") are
@@ -167,7 +290,9 @@ Note makeNotes(String transcript, [String title = 'New note']) {
   final keep = candidates.length <= 4 ? candidates.length : math.min(8, (candidates.length * 0.6).ceil());
   final ranked = [...candidates]..sort((a, b) => score(b).compareTo(score(a)));
   final chosen = ranked.take(keep).toSet();
-  final points = candidates.where(chosen.contains).toList();
+  // Gap markers lead the note and stay ungrouped: loss accounting must be
+  // conspicuous, and a long extracted bullet must not push it below the fold.
+  final points = [...gapMarks, ...candidates.where(chosen.contains)];
 
   int? keyPoint;
   if (points.isNotEmpty) {
@@ -187,7 +312,7 @@ Note makeNotes(String transcript, [String title = 'New note']) {
   }
 
   final groups = <String, List<int>>{};
-  for (var i = 0; i < points.length; i++) {
+  for (var i = gapMarks.length; i < points.length; i++) {
     groups.putIfAbsent(topicKey(points[i]), () => []).add(i);
   }
   final named = groups.entries.where((e) => e.key.isNotEmpty && e.value.length > 1).toList()
@@ -198,8 +323,11 @@ Note makeNotes(String transcript, [String title = 'New note']) {
     topics.add(Topic(_capitalize(e.key), e.value));
     used.addAll(e.value);
   }
-  final rest = [for (var i = 0; i < points.length; i++) if (!used.contains(i)) i];
+  final rest = [for (var i = gapMarks.length; i < points.length; i++) if (!used.contains(i)) i];
   if (rest.isNotEmpty) topics.add(Topic(topics.isEmpty ? 'Key points' : 'Other', rest));
+  if (gapMarks.isNotEmpty) {
+    topics.insert(0, Topic(gapMarks.length == points.length ? 'Key points' : 'Gaps in audio', [for (var i = 0; i < gapMarks.length; i++) i]));
+  }
 
   final links = <NoteLink>[
     for (final tp in topics)

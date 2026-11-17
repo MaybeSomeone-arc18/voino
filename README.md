@@ -74,7 +74,8 @@ node --test tests/api.test.js     # hosted summarizer: key rotation, validation,
 
 ```bash
 flutter build apk --debug         # Android (com.maybesomeone.voino)
-flutter build web --release       # web, output in build/web
+tools/build_web.sh                # web release, output in build/web (test-only ASR seams stripped from the artifact; Vercel and CI run the same fail-closed strip)
+flutter build web --release       # web with test seams kept - LOCAL TESTING ONLY, never deploy this output
 ```
 
 ## Optional: Gemini and the hosted summarizer

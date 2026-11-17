@@ -134,6 +134,16 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
   String summary = '', noteSource = '';
   String before = '', lastSource = '', status = idleStatus;
   String _aiSettledSource = '';
+  // Session-scoped decline latches: saying Cancel to a consent prompt settles it until the
+  // note is cleared, so a segment that finalizes after the decline cannot re-open the prompt.
+  // A decline is never permission, so unlike consented/proxyConsented these are not persisted.
+  bool _aiDeclinedKeys = false, _aiDeclinedProxy = false;
+  // Gap-recovery identity guard: a stop-time rewrite may touch the transcript
+  // only while the same capture is current and no user edit, Clear, or draft
+  // load has changed it since that capture began (see recoveryAllowed).
+  int captureSession = 0;
+  int transcriptUserRev = 0;
+  int revAtCaptureStart = 0;
   final board = BoardController();
   List<CardModel> get cards => board.cards;
   List<Link> get links => board.links;
@@ -252,6 +262,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     final parsed = parseBoardJson(jsonEncode(value));
     if (parsed == null) return;
     restoringDraft = true;
+    transcriptUserRev++;
     title.text = parsed.title;
     transcript.text = parsed.transcript;
     board.replace(parsed.board);
@@ -463,6 +474,8 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
       listening = true;
       micNote = 'Loading speech model...';
     });
+    captureSession++;
+    revAtCaptureStart = transcriptUserRev;
     try {
       await WhisperEngine.start(
         onText: (t) {
@@ -478,7 +491,9 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
           _maybeAutoNotes();
         },
         onProgress: (p) {
-          if (mounted)
+          // A rejected start() renders its error in the catch below; the still-pending
+          // pipeline keeps emitting late progress events, and they must not overwrite it.
+          if (mounted && listening)
             setState(
               () => micNote = p >= 100
                   ? 'Listening (Whisper)...'
@@ -488,6 +503,22 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
         onError: (m) => _msg(m),
         onPartial: (t) {
           if (mounted) setState(() => whisperPartial = t);
+        },
+        onRecover: (payload) {
+          // Gap markers whose deferred audio was actually transcribed on stop:
+          // rewrite them in one fail-closed pass (recoveryRewrite owns the
+          // session/revision/identity checks; null = leave everything as is).
+          if (!mounted) return;
+          final rewritten = recoveryRewrite(
+            transcript.text,
+            payload,
+            currentSid: captureSession,
+            revAtCaptureStart: revAtCaptureStart,
+            currentUserRev: transcriptUserRev,
+          );
+          if (rewritten == null) return;
+          setState(() => transcript.text = rewritten);
+          draft.flush();
         },
       );
       stats.sessionStarted();
@@ -538,6 +569,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
 
   Future<void> generate({bool manual = true}) async {
     final src = transcript.text.trim();
+    final revAtGenerate = transcriptUserRev;
     if (src.isEmpty) {
       if (manual) _msg('Speak, paste or type some words first.');
       return;
@@ -567,7 +599,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     // the AI question is settled for this transcript; do not re-ask on the
     // next stop. Manual taps still re-run everything.
     if (aiEligible) _aiSettledSource = src;
-    if (useKeys && !settings.consented) {
+    if (useKeys && !settings.consented && !_aiDeclinedKeys) {
       if (await confirm(
         'Send this transcript to Google Gemini with your API key to write a summary? It leaves your device. '
         'On Google\'s free tier, Google may use it to improve its products and human reviewers may read it - '
@@ -579,9 +611,10 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
         await persistSettings();
       } else {
         useKeys = false;
+        _aiDeclinedKeys = true; // declined stays declined for this note; final segments must not re-ask
       }
     }
-    if (useProxy && !settings.proxyConsented) {
+    if (useProxy && !settings.proxyConsented && !_aiDeclinedProxy) {
       if (await confirm(
         'Send this transcript to the Voino server, which forwards it to Google Gemini to write a summary? '
         'It leaves your device; Voino\'s app code does not store the transcript. On Google\'s free tier, Google may use '
@@ -593,6 +626,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
         await persistSettings();
       } else {
         useProxy = false;
+        _aiDeclinedProxy = true; // declined stays declined for this note; final segments must not re-ask
       }
     }
     Note n;
@@ -615,6 +649,16 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
       if (mounted) setState(() => busy = false);
     } else {
       n = makeNotes(src, title.text);
+    }
+    // Fail closed: if the document revision moved while generation was
+    // in flight (Clear, an edit, a restored draft during the consent
+    // dialogs or the network wait), these notes describe a document that
+    // no longer exists - even if its text happens to match the snapshot.
+    // Discard them instead of repopulating the new state.
+    if (generationStale(revAtGenerate, transcriptUserRev)) {
+      if (manual)
+        _msg('The transcript changed while notes were being written - nothing was applied.');
+      return;
     }
     _apply(n, src, how);
   }
@@ -665,6 +709,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
       return;
     }
     restoringDraft = true;
+    transcriptUserRev++;
     title.text = parsed.title;
     transcript.text = parsed.transcript;
     board.replace(parsed.board);
@@ -763,6 +808,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
       }
     }
     board.clear();
+    transcriptUserRev++;
     setState(() {
       title.clear();
       transcript.clear();
@@ -772,6 +818,8 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
       busy = false;
       lastSource = '';
       _aiSettledSource = '';
+      _aiDeclinedKeys = false; // a fresh note gets its one fresh ask
+      _aiDeclinedProxy = false;
       listening = false;
       micNote = '';
       status = idleStatus;
@@ -880,7 +928,10 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
         TextField(
           controller: transcript,
           maxLines: 9,
-          onChanged: (_) => setState(() {}),
+          onChanged: (_) {
+            transcriptUserRev++;
+            setState(() {});
+          },
           decoration: const InputDecoration(
             labelText: 'What Voino heard (you can fix mistakes)',
             alignLabelWithHint: true,

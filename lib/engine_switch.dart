@@ -103,7 +103,7 @@ class _EngineSwitchState extends State<EngineSwitch> with SingleTickerProviderSt
   @override
   Widget build(BuildContext context) {
     final hint = engine == 'whisper'
-        ? 'On-device: private, no internet after the first download'
+        ? 'On-device: private, speech recognition runs on this device; setup needs internet'
         : engine == 'gemini'
             ? 'Gemini: stronger Hindi/Hinglish, free tier with limits, audio goes to Google'
             : 'Cloud: starts instantly, needs internet';

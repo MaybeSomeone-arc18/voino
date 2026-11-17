@@ -1,0 +1,4 @@
+# GitHub Pages hosts documentation only. App source and test tools are not site assets.
+exclude:
+  - web/
+  - tools/

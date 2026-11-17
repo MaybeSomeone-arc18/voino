@@ -36,6 +36,8 @@ jobs:
         run: flutter test --reporter expanded
       - name: Build Flutter web preview
         run: flutter build web --release
+      - name: Strip test-only ASR seams from the web artifact (fail-closed)
+        run: node tools/strip_test_seams.js build/web/whisper.js && node --check build/web/whisper.js
       - name: Upload web preview
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
